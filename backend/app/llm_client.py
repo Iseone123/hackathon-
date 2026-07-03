@@ -22,8 +22,9 @@ logger = logging.getLogger("llm_client")
 COMPLETION_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
 EMBEDDING_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/textEmbedding"
 
-RETRIES = 3
+RETRIES = 4
 TIMEOUT = 120
+RATE_LIMIT_BASE_WAIT = 10  # сек; лимиты YandexGPT — единицы RPS
 
 
 class LLMError(RuntimeError):
@@ -80,7 +81,7 @@ def _post(url: str, payload: dict, api_key: str) -> dict:
                 timeout=TIMEOUT,
             )
             if resp.status_code == 429:
-                wait = 2**attempt
+                wait = RATE_LIMIT_BASE_WAIT * attempt
                 logger.warning("429 rate limit, жду %s c (попытка %s)", wait, attempt)
                 time.sleep(wait)
                 continue
