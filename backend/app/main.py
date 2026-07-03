@@ -88,10 +88,17 @@ async def ingest(file: UploadFile = File(...)) -> dict:
     return {"ingested": str(path.name), **stats}
 
 
+@app.get("/examples")
+def examples() -> list[dict]:
+    """Экспертные пары для сравнения в UI (имя объекта + гипотезы специалистов)."""
+    return [{"name": e["name"], "expert_hypotheses": e["expert_hypotheses"]} for e in EXAMPLES]
+
+
 class GenerateResponse(BaseModel):
     run_id: str
     input_file: str
     summary_text: str
+    diagnostics: list[dict]
     hypotheses: list[dict]
     n_samples_used: int
 
@@ -146,7 +153,7 @@ async def generate(
     _persist_run(run_id)
     return GenerateResponse(
         run_id=run_id, input_file=file.filename or "", summary_text=parsed["summary_text"],
-        hypotheses=ranked, n_samples_used=result["n_samples_used"],
+        diagnostics=parsed["diagnostics"], hypotheses=ranked, n_samples_used=result["n_samples_used"],
     )
 
 
