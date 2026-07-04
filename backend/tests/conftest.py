@@ -2,7 +2,22 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from app.models import Hypothesis, RiskScores, SourceRef
+
+FIXTURES_PROCESSED = Path(__file__).parent / "fixtures" / "processed"
+
+
+@pytest.fixture
+def kgmk_processed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Лёгкие processed JSON для тестов Пример 1 (без локального ingest-кэша)."""
+    monkeypatch.setattr(
+        "app.ingest.processed_store._processed_dir",
+        lambda: FIXTURES_PROCESSED,
+    )
 
 DEFAULT_SNIPPET = (
     "флотация медных сульфидов с ксантогенатами при pH девять "

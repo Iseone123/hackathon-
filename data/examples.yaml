@@ -1,0 +1,38 @@
+# Каталог эталонных кейсов — маршрутизация RAG и hints без хардкода в коде.
+# dir: папка относительно data/
+# keywords: подстроки в problem+constraints (lower case)
+
+examples:
+  - id: kgmk
+    dir: "Пример 1"
+    label: "КГМК"
+    keywords: ["кгмк"]
+    hints:
+      - "Hypotheses 1–2 MUST follow distinct equipment/process directions from [ПРИМЕР] brainstorm docx — NOT reagents-only"
+      - "KPI из Excel (# KPI-сводка): cite xlsx doc_id for baseline %; snippet from KPI block or brainstorm"
+      - "Учебник: реагенты — только для гипотезы 3, если в brainstorm ≥3 аппаратных направления"
+
+  - id: nof_vkr
+    dir: "Пример 2"
+    label: "НОФ вкр"
+    keywords: ["ноф вкр", "вкрапл", "ноф вкрап"]
+    hints:
+      - "Материалы [ПРИМЕР]: вкраплённая медь; cite KPI из Excel при наличии"
+
+  - id: nof_med
+    dir: "Пример 3"
+    label: "НОФ мед"
+    keywords: ["ноф мед", "ноф"]
+    hints:
+      - "Материалы [ПРИМЕР]: флотация меди; cite KPI из Excel; учитывай ограничения по энергозатратам"
+
+  - id: tof
+    dir: "Пример 4"
+    label: "ТОФ"
+    keywords: ["тоф"]
+    hints:
+      - "Материалы [ПРИМЕР]: классификация и флотация; cite Excel KPIs when present"
+
+# Если предприятие не названо, но задача про хвосты — подключаем все кейсы с KPI
+fallback:
+  broad_keywords: ["хвост", "хвостов", "tailings", "извлечение металл", "флотац"]

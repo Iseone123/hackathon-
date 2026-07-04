@@ -15,6 +15,7 @@ backend/.pytest_cache/
 # Локальные данные, артефакты прогонов — не в git (тяжёлые PDF/JSON)
 data/**
 !data/README.md
+!data/examples.yaml
 *.log
 .DS_Store
 .idea/

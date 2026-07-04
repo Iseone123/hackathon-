@@ -7,13 +7,13 @@ from app.ingest.processed_store import load_docs_for_dirs
 from app.rag.example_retrieval import build_mandatory_chunks, merge_example_chunks
 
 
-def test_load_kgmk_processed_docs():
+def test_load_kgmk_processed_docs(kgmk_processed):
     docs = load_docs_for_dirs(["Пример 1"])
     ids = {d.get("id", "") for d in docs}
     assert any("КГМК" in i for i in ids)
 
 
-def test_mandatory_chunks_include_brainstorm_and_kpi():
+def test_mandatory_chunks_include_brainstorm_and_kpi(kgmk_processed):
     topics, chunks = build_mandatory_chunks(["Пример 1"])
     assert len(topics) >= 3
     assert any("магнит" in t.lower() for t in topics)
@@ -23,7 +23,7 @@ def test_mandatory_chunks_include_brainstorm_and_kpi():
     assert all(c.get("doc_id") for c in chunks)
 
 
-def test_kpi_summary_from_processed_xlsx():
+def test_kpi_summary_from_processed_xlsx(kgmk_processed):
     docs = load_docs_for_dirs(["Пример 1"])
     xlsx = next(d for d in docs if "Хвосты" in d.get("id", ""))
     summary = kpi_summary_from_doc(xlsx)
@@ -48,7 +48,7 @@ def test_merge_puts_mandatory_first():
     assert merged[1]["doc_id"] == "brain"
 
 
-def test_retrieve_includes_excel_doc_id():
+def test_retrieve_includes_excel_doc_id(kgmk_processed):
     topics, mandatory = build_mandatory_chunks(["Пример 1"])
     assert topics
     kpi_doc = next(c["doc_id"] for c in mandatory if c.get("mandatory") == "kpi")

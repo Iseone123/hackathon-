@@ -62,7 +62,10 @@ class ExampleRegistry:
 
 
 def _examples_yaml_path() -> Path:
-    return settings.data_dir_path / "examples.yaml"
+    override = settings.data_dir_path / "examples.yaml"
+    if override.is_file():
+        return override
+    return Path(__file__).resolve().parent / "examples.default.yaml"
 
 
 def _parse_registry(data: dict[str, Any]) -> ExampleRegistry:
@@ -85,8 +88,6 @@ def _parse_registry(data: dict[str, Any]) -> ExampleRegistry:
 @lru_cache(maxsize=1)
 def get_example_registry() -> ExampleRegistry:
     path = _examples_yaml_path()
-    if not path.is_file():
-        return ExampleRegistry(cases=(), broad_keywords=("хвост", "хвостов"))
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return _parse_registry(raw)
 
