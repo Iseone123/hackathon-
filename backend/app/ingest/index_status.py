@@ -4,9 +4,30 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from app.config import settings
 from app.ingest.parser import supported_suffixes
+
+
+def get_neo4j_stats() -> dict[str, Any]:
+    """Neo4j: доступность и размер графа (без падения API при недоступности)."""
+    try:
+        from app.db.neo4j_store import Neo4jStore
+
+        store = Neo4jStore()
+        try:
+            return store.get_graph_stats()
+        finally:
+            store.close()
+    except Exception as exc:
+        return {
+            "available": False,
+            "nodes": 0,
+            "relationships": 0,
+            "publications": 0,
+            "error": str(exc)[:200],
+        }
 
 
 def _indexed_sources() -> dict[str, dict]:
@@ -21,11 +42,25 @@ def _indexed_sources() -> dict[str, dict]:
         except (json.JSONDecodeError, OSError):
             continue
         source = data.get("metadata", {}).get("source", "")
-        if source:
-            indexed[source] = {
-                "doc_id": data.get("id", path.stem),
-                "title": data.get("metadata", {}).get("title", ""),
-            }
+        if not source:
+            continue
+        entry = {
+            "doc_id": data.get("id", path.stem),
+            "title": data.get("metadata", {}).get("title", ""),
+        }
+        indexed[source] = entry
+        # Строки таблицы опытов: «файл.xlsx#A1» → родительский файл считается проиндексированным
+        if "#" in source:
+            parent = source.split("#", 1)[0]
+            prev = indexed.get(parent)
+            if prev:
+                prev["experiment_rows"] = prev.get("experiment_rows", 1) + 1
+            else:
+                indexed[parent] = {
+                    "doc_id": entry["doc_id"],
+                    "title": parent.rsplit("/", 1)[-1],
+                    "experiment_rows": 1,
+                }
     return indexed
 
 
@@ -69,11 +104,14 @@ def get_index_status(directory: str | None = None) -> dict:
     except Exception:
         pass
 
+    neo4j = get_neo4j_stats()
+
     return {
         "total_files": len(files),
         "indexed_files": len(indexed_files),
         "missing_files": len(missing_files),
         "qdrant_points": qdrant_points,
+        "neo4j": neo4j,
         "indexed": indexed_files,
         "missing": missing_files,
     }

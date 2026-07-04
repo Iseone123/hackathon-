@@ -10,6 +10,42 @@ from roadmap_viz import render_roadmap_timeline_html
 from ui.tables import hypotheses_table, sorted_hypotheses
 
 
+def _confidence_label(level: str) -> str:
+    return {"high": "высокая", "medium": "средняя", "low": "низкая"}.get(level, level)
+
+
+def _collect_uncertainty_metrics(hypotheses: list[dict]) -> dict:
+    """Агрегаты для блока «Неопределённость» по гипотезам прогона."""
+    confidences: list[str] = []
+    predictive_scores: list[float] = []
+    judge_scores: list[float] = []
+    for h in hypotheses:
+        bc = h.get("business_case") or {}
+        conf = bc.get("confidence")
+        if conf:
+            confidences.append(str(conf))
+        ra = h.get("research_analysis") or {}
+        ps = ra.get("predictive_score")
+        if ps is not None:
+            predictive_scores.append(float(ps))
+        jv = h.get("judge_verdict") or {}
+        if jv.get("overall_score") is not None:
+            judge_scores.append(float(jv["overall_score"]))
+    avg_predictive = (
+        sum(predictive_scores) / len(predictive_scores) if predictive_scores else None
+    )
+    avg_judge = sum(judge_scores) / len(judge_scores) if judge_scores else None
+    conf_counts = {k: confidences.count(k) for k in ("high", "medium", "low") if k in confidences}
+    dominant_conf = max(conf_counts, key=conf_counts.get) if conf_counts else None
+    return {
+        "avg_predictive": avg_predictive,
+        "predictive_n": len(predictive_scores),
+        "avg_judge": avg_judge,
+        "dominant_confidence": dominant_conf,
+        "confidence_counts": conf_counts,
+    }
+
+
 @st.cache_data(show_spinner=False)
 def _cached_export(gen_id: str, fmt: str) -> bytes:
     return download_export(gen_id, fmt)
@@ -73,21 +109,56 @@ def render_tab_results() -> None:
                     st.caption(f"→ {g['suggested_action']}")
 
     js = result.get("judge_summary")
-    if js:
-        target = js.get("objective_target", 75)
-        jqi = js.get("jqi", 0)
-        st.markdown("**Целевая метрика: JQI (Judge Quality Index)**")
-        jc1, jc2, jc3, jc4 = st.columns(4)
-        jc1.metric(
-            "JQI",
-            f"{jqi:.1f}",
-            delta=f"{jqi - target:+.1f} к цели {target:.0f}",
+    unc = _collect_uncertainty_metrics(hypotheses)
+    if js or unc["predictive_n"] or unc["dominant_confidence"]:
+        st.markdown("**Неопределённость и качество прогона**")
+        st.caption(
+            "Сводка метрик надёжности: JQI и grounding — качество судьи и RAG; "
+            "confidence — уверенность бизнес-кейса; predictive — ML-модель по таблице опытов."
         )
-        jc2.metric("Одобрено", f"{js.get('approved', 0)}/{js.get('total', 0)}")
-        jc3.metric("ТЗ кейса", f"{js.get('avg_case_compliance_pct', 0):.0f}%")
-        jc4.metric("Привязка к RAG", f"{100 * js.get('grounding_rate', 0):.0f}%")
-        st.progress(min(jqi / 100, 1.0), text=f"JQI {jqi:.1f} / 100 (цель {target:.0f})")
-        if js.get("compliance_notes"):
+        u1, u2, u3, u4, u5 = st.columns(5)
+        if js:
+            target = js.get("objective_target", 75)
+            jqi = js.get("jqi", 0)
+            u1.metric(
+                "JQI",
+                f"{jqi:.1f}",
+                delta=f"{jqi - target:+.1f} к цели {target:.0f}",
+            )
+            u2.metric("Привязка к RAG", f"{100 * js.get('grounding_rate', 0):.0f}%")
+            u3.metric("Одобрено", f"{js.get('approved', 0)}/{js.get('total', 0)}")
+            u4.metric("ТЗ кейса", f"{js.get('avg_case_compliance_pct', 0):.0f}%")
+        if unc["dominant_confidence"]:
+            u5.metric(
+                "Confidence (ROI)",
+                _confidence_label(unc["dominant_confidence"]),
+                help="Доминирующая уверенность бизнес-кейса по гипотезам",
+            )
+        elif js:
+            u5.metric("Confidence (ROI)", "—")
+        if js:
+            jqi = js.get("jqi", 0)
+            target = js.get("objective_target", 75)
+            st.progress(min(jqi / 100, 1.0), text=f"JQI {jqi:.1f} / 100 (цель {target:.0f})")
+        if unc["avg_predictive"] is not None:
+            st.progress(
+                unc["avg_predictive"],
+                text=(
+                    f"Средняя predictive-оценка {unc['avg_predictive']:.0%} "
+                    f"({unc['predictive_n']}/{len(hypotheses)} гипотез с ML)"
+                ),
+            )
+        if unc["avg_judge"] is not None and js:
+            st.caption(
+                f"Средний балл судьи: {unc['avg_judge']:.1f}/10 · "
+                f"Grounding: {100 * js.get('grounding_rate', 0):.0f}% · "
+                + (
+                    f"Confidence: {', '.join(f'{_confidence_label(k)}={v}' for k, v in unc['confidence_counts'].items())}"
+                    if unc["confidence_counts"]
+                    else "Confidence: нет данных"
+                )
+            )
+        if js and js.get("compliance_notes"):
             with st.expander("Соответствие требованиям кейса"):
                 for note in js["compliance_notes"]:
                     st.markdown(f"- {note}")

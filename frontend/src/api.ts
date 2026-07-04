@@ -69,8 +69,10 @@ export interface Hypothesis {
   reasoning: string;
   conflicts: string[];
   influence_graph: {
-    nodes?: Array<{ id: string; type: string }>;
+    nodes?: Array<{ id: string; type: string; source_doc_id?: string; phase_order?: number }>;
     links?: Array<{ source: string; target: string; type: string }>;
+    states?: Array<{ id: string; type: string; phase_order?: number; description?: string }>;
+    transitions?: Array<{ from?: string; to?: string; source?: string; target?: string; type: string; condition?: string }>;
   };
   score_breakdown?: ScoreBreakdown;
   judge_verdict?: JudgeVerdict;

@@ -80,7 +80,15 @@ def build_hypothesis_from_raw(
     if not reasoning:
         reasoning = f"Обоснование на основе RAG-контекста: {text[:150]}"
     mechanism = str(raw.get("mechanism", ""))
-    graph = ensure_influence_graph(raw.get("influence_graph"), text, mechanism, problem)
+    graph = ensure_influence_graph(
+        raw.get("influence_graph"),
+        text,
+        mechanism,
+        problem,
+        sources=sources,
+        roadmap=roadmap if isinstance(roadmap, list) else None,
+        chunks=chunks,
+    )
 
     return Hypothesis(
         id=f"{generation_id[:8]}-h{index}",

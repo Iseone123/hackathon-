@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     llm_timeout_sec: float = 120.0
     llm_max_retries: int = 8
     llm_request_delay_sec: float = 3.0
+    embed_parallel_workers: int = 4
     llm_temperature: float = 0.3
     llm_max_tokens: int = 4000
 

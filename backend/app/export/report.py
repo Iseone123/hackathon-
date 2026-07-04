@@ -13,13 +13,31 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from app.export.pdf_fonts import register_pdf_fonts
 from app.models import Hypothesis
 
 
 def _styles():
+    font = register_pdf_fonts()
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="TitleRu", parent=styles["Title"], fontSize=16, spaceAfter=12))
-    styles.add(ParagraphStyle(name="BodyRu", parent=styles["Normal"], fontSize=10, leading=14))
+    styles.add(
+        ParagraphStyle(
+            name="TitleRu",
+            parent=styles["Title"],
+            fontName=font,
+            fontSize=16,
+            spaceAfter=12,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="BodyRu",
+            parent=styles["Normal"],
+            fontName=font,
+            fontSize=10,
+            leading=14,
+        )
+    )
     return styles
 
 

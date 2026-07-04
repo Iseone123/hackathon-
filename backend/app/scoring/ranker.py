@@ -48,11 +48,16 @@ class Ranker:
         avg_risk = (hypothesis.risk.technical + hypothesis.risk.economic) / 2
         risk_inverted = self._normalize(10.0 - avg_risk)
 
+        from app.hypotheses.influence_graph import graph_completeness_score
+
+        graph_bonus = graph_completeness_score(hypothesis.influence_graph) * 0.05
+
         composite = (
             w.get("novelty", 0.3) * novelty
             + w.get("feasibility", 0.25) * feasibility
             + w.get("expected_value", 0.3) * expected_value
             + w.get("risk", 0.15) * risk_inverted
+            + graph_bonus
         )
 
         hypothesis.score_breakdown = ScoreBreakdown(

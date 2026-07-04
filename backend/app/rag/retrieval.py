@@ -13,9 +13,11 @@ from app.llm_client import YandexLLMClient
 from app.rag.example_context import (
     example_source_boost,
     infer_example_dirs,
+    kpi_chunk_boost,
     merge_example_chunks,
     score_example_chunk,
 )
+from app.rag.corpus_graph import build_corpus_subgraph, merge_subgraphs
 
 
 class RAGRetriever:
@@ -55,7 +57,7 @@ class RAGRetriever:
         )[:k]
         expanded = self._expand_neighbors(merged, k)
 
-        subgraph = self.neo4j.get_subgraph(keywords)
+        subgraph = self._load_subgraph(keywords)
         conflicts = self._detect_conflicts(expanded)
 
         return {
@@ -113,7 +115,8 @@ class RAGRetriever:
             kw_boost = min(kw_matches / max(len(kw_lower), 1), 1.0) * 0.15
             quality = text_quality_score(hit["text"]) * 0.1
             ex_boost = example_source_boost(hit.get("source", ""), dirs)
-            final = hit["score"] + kw_boost + quality + ex_boost
+            kpi_boost = kpi_chunk_boost(hit.get("text", ""))
+            final = hit["score"] + kw_boost + quality + ex_boost + kpi_boost
             scored.append((final, hit))
 
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -239,3 +242,17 @@ class RAGRetriever:
                     f"указывают на противоположные эффекты"
                 )
         return conflicts[:5]
+
+    def _load_subgraph(self, keywords: list[str]) -> dict[str, Any]:
+        neo4j_graph: dict[str, Any] = {"nodes": [], "links": []}
+        try:
+            if self.neo4j.is_available():
+                neo4j_graph = self.neo4j.get_subgraph(keywords)
+        except Exception:
+            pass
+
+        corpus_graph = build_corpus_subgraph(keywords)
+        merged = merge_subgraphs(neo4j_graph, corpus_graph)
+        if not merged["nodes"] and corpus_graph["nodes"]:
+            merged = corpus_graph
+        return merged

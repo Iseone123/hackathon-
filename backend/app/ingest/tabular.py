@@ -263,6 +263,46 @@ def read_xlsx_sheets(path: Path) -> dict[str, list[list[str]]]:
     return sheets
 
 
+def extract_workbook_kpi(path: Path) -> tuple[dict[str, Any], list[str]] | None:
+    """KPI хвостов из xlsx: метрики + строки сводки для отдельного чанка."""
+    sheets = read_xlsx_sheets(path)
+    all_rows: list[list[str]] = []
+    for rows in sheets.values():
+        all_rows.extend(rows)
+
+    summary_lines = summarize_sheet_domain(all_rows)
+    if not summary_lines:
+        return None
+
+    kpi: dict[str, Any] = {}
+    for line in summary_lines:
+        if "Отвальные хвосты" in line:
+            match = re.search(r":\s*([\d.,eE+-]+)", line)
+            if match:
+                kpi["tailings_tonnage"] = match.group(1).replace(",", ".")
+        if "извлекаемый металл" in line.lower():
+            match = re.search(r":\s*([\d.,]+)\s*%", line)
+            if match:
+                kpi["recoverable_metal_pct"] = float(match.group(1).replace(",", "."))
+        grain = re.match(r"^-\s*([+\-]?\d+(?:\s*\+\s*\d+)?(?:\s*мкм)?)", line, re.I)
+        if grain:
+            kpi.setdefault("grain_classes", []).append(grain.group(1).strip())
+
+    if not kpi and not summary_lines:
+        return None
+    return kpi, summary_lines
+
+
+def build_kpi_priority_chunk(filename: str, summary_lines: list[str]) -> str:
+    """Короткий чанк KPI — всегда chunk_index=0 при ingest."""
+    header = [
+        f"# KPI-сводка: {filename}",
+        "Тег: enterprise_kpi — цитируй этот блок для KPI из Excel (%, тоннаж, крупность).",
+        "",
+    ]
+    return "\n".join(header + summary_lines)
+
+
 def parse_spreadsheet(path: Path) -> str:
     """Точка входа: любой xlsx/xls → текст для RAG."""
     sheets = read_xlsx_sheets(path)

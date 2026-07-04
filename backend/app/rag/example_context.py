@@ -1,4 +1,4 @@
-"""Приоритизация чанков из папок «Пример 1–4» при retrieval."""
+"""Приоритизация чанков из папок «Пример N» при retrieval."""
 
 from __future__ import annotations
 
@@ -6,32 +6,18 @@ import re
 from typing import Any
 
 from app.config import settings
+from app.rag.example_registry import infer_example_dirs as _infer_example_dirs
+
+_KPI_CHUNK_MARKERS = (
+    "# kpi-сводка",
+    "тег: enterprise_kpi",
+    "итого извлекаемый металл в хвостах",
+    "отвальные хвосты:",
+)
 
 
 def infer_example_dirs(problem: str, constraints: str = "") -> list[str]:
-    """Сопоставляет формулировку задачи с папками эталонных материалов."""
-    text = f"{problem} {constraints}".lower()
-    dirs: list[str] = []
-
-    if "кгмк" in text:
-        dirs.append("Пример 1")
-    if "ноф" in text:
-        if "вкрапл" in text or "вкр" in text:
-            dirs.append("Пример 2")
-        else:
-            dirs.append("Пример 3")
-    if "тоф" in text:
-        dirs.append("Пример 4")
-    if "хвост" in text and not dirs:
-        dirs.extend(["Пример 1", "Пример 2"])
-
-    seen: set[str] = set()
-    unique: list[str] = []
-    for d in dirs:
-        if d not in seen:
-            seen.add(d)
-            unique.append(d)
-    return unique
+    return _infer_example_dirs(problem, constraints)
 
 
 def example_source_boost(source: str, example_dirs: list[str]) -> float:
@@ -57,6 +43,14 @@ def example_source_boost(source: str, example_dirs: list[str]) -> float:
     return boost
 
 
+def kpi_chunk_boost(text: str) -> float:
+    """Бонус для короткого KPI-чанка (enterprise_kpi)."""
+    lowered = text.lower().strip()
+    if any(marker in lowered for marker in _KPI_CHUNK_MARKERS):
+        return 0.25
+    return 0.0
+
+
 def score_example_chunk(text: str, keywords: list[str]) -> float:
     """Релевантность чанка примера к запросу по ключевым словам."""
     if not text:
@@ -64,17 +58,18 @@ def score_example_chunk(text: str, keywords: list[str]) -> float:
     text_lower = text.lower()
     kw_lower = [w.lower() for w in keywords if len(w) >= 4]
     if not kw_lower:
-        return 0.5
+        base = 0.5
+    else:
+        matches = sum(1 for w in kw_lower if w in text_lower)
+        kw_score = matches / max(len(kw_lower), 1)
+        base = kw_score * 0.7
 
-    matches = sum(1 for w in kw_lower if w in text_lower)
-    kw_score = matches / max(len(kw_lower), 1)
-
-    bonus = 0.0
-    for marker in ("извлекаемый металл", "гипотеза", "мозгового штурма", "кмц", "хвост"):
+    bonus = kpi_chunk_boost(text)
+    for marker in ("извлекаемый металл", "гипотеза", "мозгового штурма", "хвост"):
         if marker in text_lower:
             bonus += 0.08
 
-    return min(1.0, kw_score * 0.7 + bonus)
+    return min(1.0, base + bonus)
 
 
 def merge_example_chunks(
@@ -94,7 +89,10 @@ def merge_example_chunks(
 
     ranked = sorted(
         example_hits,
-        key=lambda h: h.get("example_score", 0.0),
+        key=lambda h: (
+            kpi_chunk_boost(h.get("text", "")),
+            h.get("example_score", 0.0),
+        ),
         reverse=True,
     )
     for hit in ranked:
@@ -109,7 +107,7 @@ def merge_example_chunks(
     if not injected:
         return vector_hits
 
-    # Примеры — в начало контекста, учебники остаются для механизмов/реагентов
+    # KPI и примеры — в начало контекста
     return injected + vector_hits
 
 

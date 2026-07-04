@@ -26,20 +26,31 @@ Respond ONLY with JSON for ONE hypothesis:
   "expected_value_score": 0-10,
   "risk": {"technical": 0-10, "economic": 0-10},
   "influence_graph": {
-    "nodes": [{"id": "reagent", "type": "Material"}, {"id": "KPI", "type": "Property"}],
-    "links": [{"source": "reagent", "target": "KPI", "type": "AFFECTS"}]
+    "nodes": [
+      {"id": "reagent", "type": "Material", "source_doc_id": "exact_id_from_context"},
+      {"id": "flotation", "type": "Process", "source_doc_id": "exact_id_from_context"},
+      {"id": "Cu recovery", "type": "Property", "source_doc_id": "exact_id_from_context"}
+    ],
+    "links": [
+      {"source": "reagent", "target": "flotation", "type": "USED_IN"},
+      {"source": "flotation", "target": "Cu recovery", "type": "AFFECTS"}
+    ],
+    "states": [{"id": "lab phase", "type": "State", "phase_order": 1}],
+    "transitions": []
   }
 }
 Rules:
 - obey ALL constraints
 - use ONLY doc_id values from context
+- output text/mechanism/reasoning/roadmap in Russian; translate facts from EN/CN sources
+- snippet stays verbatim in the source language (do NOT translate snippet)
 - """
     + CITATION_RULES_SHORT
     + "\n- "
     + FORMULATION_RULES_SHORT
     + """
 - min 2 roadmap steps with resources and success/failure criteria
-- reasoning must quote the snippet
+- reasoning must explain the snippet (translate foreign snippets into Russian)
 """
 )
 

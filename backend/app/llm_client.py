@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -55,6 +57,7 @@ class YandexLLMClient:
     timeout: float = field(default_factory=lambda: settings.llm_timeout_sec)
     call_history: list[LLMCallLog] = field(default_factory=list)
     _last_request_at: float = field(default=0.0, init=False, repr=False)
+    _throttle_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.api_key or not self.folder_id:
@@ -93,10 +96,11 @@ class YandexLLMClient:
             interval = 0.0
         if interval <= 0:
             return
-        elapsed = time.perf_counter() - self._last_request_at
-        if elapsed < interval:
-            time.sleep(interval - elapsed)
-        self._last_request_at = time.perf_counter()
+        with self._throttle_lock:
+            elapsed = time.perf_counter() - self._last_request_at
+            if elapsed < interval:
+                time.sleep(interval - elapsed)
+            self._last_request_at = time.perf_counter()
 
     @retry(
         retry=retry_if_exception(_is_retryable_llm_error),
@@ -249,21 +253,10 @@ class YandexLLMClient:
     def embed_query(self, text: str) -> list[float]:
         return self._embed([text], settings.embed_query_model)[0]
 
-    def _embed(self, texts: list[str], model: str) -> list[list[float]]:
-        if not texts:
-            return []
+    def _embed_single(self, text: str, model: str) -> list[float]:
         model_uri = self._model_uri("emb", model)
         start = time.perf_counter()
-        payload = {
-            "modelUri": model_uri,
-            "text": texts[0] if len(texts) == 1 else None,
-        }
-        if len(texts) > 1:
-            embeddings: list[list[float]] = []
-            for text in texts:
-                embeddings.append(self._embed([text], model)[0])
-            return embeddings
-
+        payload = {"modelUri": model_uri, "text": text}
         try:
             data = self._post(settings.llm_embedding_url, payload)
             if "result" in data:
@@ -277,10 +270,10 @@ class YandexLLMClient:
                     operation="embedding",
                     model=model_uri,
                     latency_ms=(time.perf_counter() - start) * 1000,
-                    input_tokens=len(texts[0].split()),
+                    input_tokens=len(text.split()),
                 )
             )
-            return [vector]
+            return vector
         except Exception as exc:
             self._log_call(
                 LLMCallLog(
@@ -292,6 +285,27 @@ class YandexLLMClient:
                 )
             )
             raise
+
+    def _embed(self, texts: list[str], model: str) -> list[list[float]]:
+        if not texts:
+            return []
+        if len(texts) == 1:
+            return [self._embed_single(texts[0], model)]
+
+        workers = max(1, int(settings.embed_parallel_workers))
+        if workers <= 1:
+            return [self._embed_single(text, model) for text in texts]
+
+        results: list[list[float] | None] = [None] * len(texts)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            future_map = {
+                pool.submit(self._embed_single, text, model): idx
+                for idx, text in enumerate(texts)
+            }
+            for future in as_completed(future_map):
+                idx = future_map[future]
+                results[idx] = future.result()
+        return results  # type: ignore[return-value]
 
     @staticmethod
     def _escape_control_chars_in_strings(text: str) -> str:

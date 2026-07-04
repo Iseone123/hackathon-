@@ -46,49 +46,15 @@ def _extract_docx_meta(path: Path, meta: DocumentMetadata) -> DocumentMetadata:
 
 
 def _parse_xlsx_isa_tab(path: Path) -> IsaTabRecord | None:
-    try:
-        from openpyxl import load_workbook
-    except ImportError:
-        return None
-
-    try:
-        wb = load_workbook(str(path), read_only=True, data_only=True)
-    except Exception:
-        return None
-
-    sheet = wb.worksheets[0]
-    rows = list(sheet.iter_rows(values_only=True))[:30]
-    if len(rows) < 2:
-        return None
-
-    header = [str(c).strip().lower() if c is not None else "" for c in rows[0]]
-    factors: dict[str, Any] = {}
-    measurements: dict[str, Any] = {}
-    for row in rows[1:]:
-        for i, cell in enumerate(row):
-            if cell is None or i >= len(header) or not header[i]:
-                continue
-            h = header[i]
-            if any(k in h for k in ("ph", "доз", "темп", "реагент")):
-                factors[header[i]] = cell
-            if any(k in h for k in ("извлеч", "recover", "выход", "содерж")):
-                measurements[header[i]] = cell
-
-    if not factors and not measurements:
-        return None
-
-    first_row = {header[i]: rows[1][i] for i in range(min(len(header), len(rows[1]))) if header[i]}
-    return IsaTabRecord(
-        investigation_id=path.stem,
-        study_id=f"{path.stem}_study",
-        assay_id=f"{path.stem}_assay",
-        factor_names=list(factors.keys())[:8],
-        factor_values=factors,
-        measurement_type=next(iter(measurements.keys()), "assay_result"),
-        measurement_value=str(next(iter(measurements.values()), "")),
-        unit="%" if measurements else None,
-        raw_sample_characteristics=first_row,
+    from app.ingest.experiment_table import (
+        build_experiment_row_metadata,
+        parse_experiment_table,
     )
+
+    rows = parse_experiment_table(path)
+    if rows:
+        return build_experiment_row_metadata(path, rows[0]).isa_tab
+    return None
 
 
 def _build_allotrope_uri(material: str | None, process: str = "flotation") -> str:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Callable
 
+from app.hypotheses.influence_graph import validate_influence_graph
 from app.models import CaseCheckItem, CaseCompliance, Hypothesis
 
 # Обязательные пункты ТЗ (без них — reject)
@@ -23,6 +24,7 @@ OPTIONAL_CHECKS: list[tuple[str, str]] = [
     ("roadmap_steps", "Дорожная карта: последовательность экспериментов (≥2 шага)"),
     ("roadmap_resources", "Дорожная карта: необходимые ресурсы"),
     ("roadmap_criteria", "Дорожная карта: критерии успеха/провала"),
+    ("influence_graph", "Граф влияния: causal chain + привязка к источникам"),
     ("business_case", "Бизнес-кейс: KPI, ROI, окупаемость"),
 ]
 
@@ -34,8 +36,42 @@ def _has_specific_params(text: str) -> bool:
         r"\d+[\.,]?\d*\s*кг\s*/\s*т",
         r"pH\s*\d",
         r"\d+[\.,]?\d*\s*[-–—]\s*\d+",
+        # Аппаратные параметры: размеры, обороты, мощность
+        r"\d+[\.,]?\d*\s*(мм|мкм|см|м\b|об/мин|rpm|кВт|МПа|бар)\b",
+        r"(?:с|от)\s*\d+\s*(?:на|до)\s*\d+",
+        r"\d+\s*(?:→|->)\s*\d+",
     ]
     return any(re.search(p, text, re.IGNORECASE) for p in patterns)
+
+
+def _has_equipment_testability(text: str) -> bool:
+    """Проверяемость аппаратно-режимных гипотез (мельницы, грохота, гидроциклоны)."""
+    has_equipment = bool(
+        re.search(
+            r"(мельниц|гидроциклон|грохот|футеровк|насадок|сепаратор|"
+            r"классификатор|грохочен|циклон|дробил|мельни|флотац)",
+            text,
+            re.IGNORECASE,
+        )
+    )
+    has_change = bool(
+        re.search(
+            r"(изменени|замен|модерниз|установк|оптимизац|перестрой|"
+            r"реконструкц|увеличени|снижени|перевод|переключ|"
+            r"повысит|снизит|улучшит|увеличит)",
+            text,
+            re.IGNORECASE,
+        )
+    )
+    has_concrete = _has_specific_params(text) or bool(
+        re.search(
+            r"(геометри|конфигурац|конструкц|диаметр|крупност|зазор|"
+            r"частот|скорост|схем|режим|класс)",
+            text,
+            re.IGNORECASE,
+        )
+    )
+    return has_equipment and has_change and has_concrete
 
 
 def _kpi_keywords(problem: str) -> list[str]:
@@ -51,15 +87,16 @@ def _check_testable_formulation(h: Hypothesis) -> tuple[bool, str]:
         re.search(
             r"(повысит|повышени|снизит|снижени|улучшит|улучшени|"
             r"обеспечит|позволит|увеличит|оптимизир|"
-            r"увеличит|достигнет|обеспечит)",
+            r"увеличит|достигнет|обеспечит|изменит|заменит|"
+            r"модернизир|переведёт|переведет)",
             text,
             re.IGNORECASE,
         )
     )
     if not has_action:
         return False, "Нет проверяемого утверждения (ожидаемый эффект)"
-    if not _has_specific_params(text):
-        return False, "Нет конкретных параметров (%, кг/т, pH, режим и т.п.)"
+    if not (_has_specific_params(text) or _has_equipment_testability(text)):
+        return False, "Нет конкретных параметров (%, кг/т, pH, аппаратный режим и т.п.)"
     if re.search(r"\bможет\b", text, re.I) and not re.search(
         r"\d+[\.,]?\d*\s*%", text
     ):
@@ -177,6 +214,16 @@ def _check_roadmap_criteria(h: Hypothesis) -> tuple[bool, str]:
     return False, "Нет критериев успеха/провала"
 
 
+def _check_influence_graph(h: Hypothesis) -> tuple[bool, str]:
+    ok, issues = validate_influence_graph(h.influence_graph or {}, h.sources)
+    hard = [i for i in issues if not i.startswith("Рекомендация")]
+    if hard:
+        return False, "; ".join(hard)
+    if issues:
+        return True, "; ".join(issues)
+    return True, ""
+
+
 def _check_business_case(h: Hypothesis) -> tuple[bool, str]:
     bc = h.business_case
     if not bc:
@@ -201,6 +248,7 @@ _CHECKERS: dict[str, Callable[[Hypothesis, str], tuple[bool, str]]] = {
     "roadmap_steps": lambda h, p: _check_roadmap_steps(h),
     "roadmap_resources": lambda h, p: _check_roadmap_resources(h),
     "roadmap_criteria": lambda h, p: _check_roadmap_criteria(h),
+    "influence_graph": lambda h, p: _check_influence_graph(h),
     "business_case": lambda h, p: _check_business_case(h),
 }
 

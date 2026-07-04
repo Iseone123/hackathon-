@@ -24,17 +24,21 @@ def render_influence_graph_html(graph: dict[str, Any]) -> str | None:
         "Process": "#16a34a",
         "Property": "#9333ea",
         "Parameter": "#ea580c",
+        "State": "#0891b2",
     }
 
     for node in nodes:
         node_id = node.get("id", "")
         node_type = node.get("type", "Entity")
+        title = node_type
+        if node.get("source_doc_id"):
+            title += f" | source: {node['source_doc_id']}"
         net.add_node(
             node_id,
             label=node_id,
-            title=node_type,
+            title=title,
             color=colors.get(node_type, "#64748b"),
-            size=18,
+            size=22 if node_type == "State" else 18,
         )
 
     for link in links:
@@ -42,5 +46,11 @@ def render_influence_graph_html(graph: dict[str, Any]) -> str | None:
         tgt = link.get("target", "")
         if src and tgt:
             net.add_edge(src, tgt, title=link.get("type", ""))
+
+    for tr in graph.get("transitions") or []:
+        src = tr.get("from") or tr.get("source", "")
+        tgt = tr.get("to") or tr.get("target", "")
+        if src and tgt:
+            net.add_edge(src, tgt, title=tr.get("type", "NEXT_PHASE"), dashes=True)
 
     return net.generate_html(notebook=False)

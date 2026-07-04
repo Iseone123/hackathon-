@@ -13,7 +13,7 @@ from app.hypotheses.business_case import build_business_case
 from app.hypotheses.context_builder import build_generation_user_prompt, build_rag_context
 from app.hypotheses.hypothesis_factory import build_hypothesis_from_raw
 from app.hypotheses.problem_input import normalize_problem_constraints
-from app.hypotheses.prompts import GENERATION_SYSTEM
+from app.hypotheses.prompt_sections import build_generation_system
 from app.hypotheses.research_analysis import build_research_analysis
 from app.hypotheses.roadmap_builder import build_structured_roadmap, roadmap_to_text
 from app.hypotheses.sanitize import dedupe_key, relax_raw_hypothesis, sanitize_raw_hypothesis
@@ -68,8 +68,9 @@ class HypothesisGenerator:
         if weights is None:
             weights = get_learned_weights()
 
+        system_prompt = build_generation_system(language)
         samples = self.llm.complete_json(
-            GENERATION_SYSTEM,
+            system_prompt,
             user_prompt,
             samples=settings.generation_samples,
         )

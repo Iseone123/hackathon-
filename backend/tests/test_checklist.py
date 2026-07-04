@@ -60,3 +60,27 @@ class TestCaseChecklist:
         c = evaluate_case_compliance(h, "извлечение меди из хвостов КГМК")
         item = next(i for i in c.items if i.key == "testable_formulation")
         assert item.passed
+
+    def test_equipment_hypothesis_passes(self):
+        h = _good_hypothesis()
+        h.text = (
+            "Замена песковых насадок гидроциклонов с 12 на 8 мм "
+            "повысит классификацию питания мельниц и извлечение меди из хвостов"
+        )
+        h.mechanism = (
+            "Уменьшение диаметра насадок повышает скорость потока и селективность классификации"
+        )
+        c = evaluate_case_compliance(h, "извлечение меди из хвостов КГМК")
+        item = next(i for i in c.items if i.key == "testable_formulation")
+        assert item.passed, item.note
+
+    def test_mill_geometry_hypothesis_passes(self):
+        h = _good_hypothesis()
+        h.text = (
+            "Изменение геометрии футеровки шаровых мельниц "
+            "улучшит измельчение и повысит извлечение меди из хвостов КГМК"
+        )
+        h.mechanism = "Новая конфигурация футеровки изменит режим измельчения и крупность класса"
+        c = evaluate_case_compliance(h, "извлечение меди из хвостов КГМК")
+        item = next(i for i in c.items if i.key == "testable_formulation")
+        assert item.passed, item.note

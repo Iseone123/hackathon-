@@ -43,6 +43,11 @@ def render_sidebar() -> None:
     try:
         status = index_status()
         st.sidebar.metric("В Qdrant", status.get("qdrant_points", 0))
+        neo4j = status.get("neo4j") or {}
+        if neo4j.get("available"):
+            st.sidebar.metric("Neo4j узлов", neo4j.get("nodes", 0))
+        else:
+            st.sidebar.warning("Neo4j недоступен")
         st.sidebar.caption(
             f"Файлов: {status.get('indexed_files', 0)}/{status.get('total_files', 0)} "
             f"проиндексировано"

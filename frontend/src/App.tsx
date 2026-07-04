@@ -28,11 +28,18 @@ function InfluenceGraph({ graph }: { graph: Hypothesis['influence_graph'] }) {
     name: n.id,
     type: n.type,
   }));
-  const links = (graph?.links || []).map((l) => ({
-    source: l.source,
-    target: l.target,
-    type: l.type,
-  }));
+  const links = [
+    ...(graph?.links || []).map((l) => ({
+      source: l.source,
+      target: l.target,
+      type: l.type,
+    })),
+    ...((graph?.transitions || []).map((t) => ({
+      source: t.from || t.source,
+      target: t.to || t.target,
+      type: t.type || 'NEXT_PHASE',
+    })) as Array<{ source: string; target: string; type: string }>),
+  ];
 
   if (!nodes.length) {
     return <p style={{ color: '#888', fontSize: '0.85rem' }}>Граф влияния не задан</p>;
@@ -54,7 +61,11 @@ function InfluenceGraph({ graph }: { graph: Hypothesis['influence_graph'] }) {
               ? '#2563eb'
               : (node as { type?: string }).type === 'Process'
                 ? '#16a34a'
-                : '#9333ea';
+                : (node as { type?: string }).type === 'State'
+                  ? '#0891b2'
+                  : (node as { type?: string }).type === 'Parameter'
+                    ? '#ea580c'
+                    : '#9333ea';
           ctx.beginPath();
           ctx.arc(node.x!, node.y!, 5, 0, 2 * Math.PI, false);
           ctx.fillStyle = color;

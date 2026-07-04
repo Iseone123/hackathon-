@@ -32,10 +32,16 @@ def build_rag_context(
             f"{chunk['text'][:chunk_chars]}"
         )
     subgraph = retrieval["subgraph"]
-    if subgraph["nodes"]:
+    if subgraph.get("nodes"):
         parts.append("\nKnowledge graph excerpt:")
         for node in subgraph["nodes"][:10]:
-            parts.append(f"  - {node['type']}: {node['id']}")
+            src = node.get("properties", {}).get("source") or node.get("source_doc_id") or ""
+            suffix = f" [{src}]" if src else ""
+            parts.append(f"  - {node['type']}: {node['id']}{suffix}")
+        for link in (subgraph.get("links") or [])[:8]:
+            parts.append(
+                f"  → {link.get('source')} --{link.get('type', '?')}--> {link.get('target')}"
+            )
     if knowledge_gaps:
         parts.append("\nKnowledge gaps (address in hypotheses where possible):")
         for g in knowledge_gaps[:5]:
@@ -71,5 +77,7 @@ def build_generation_user_prompt(
         f"{case_block}{strategy_block}\n\n"
         f"Relevant sources and knowledge graph:\n{context}"
         f"{conflict_text}{hints_block}\n\n"
+        "Note: sources may be in RU/EN/CN — extract facts and write hypotheses in Russian; "
+        "keep sources[].snippet verbatim from the chunk.\n\n"
         f"{build_generation_user_footer()}"
     )

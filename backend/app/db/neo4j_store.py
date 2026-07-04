@@ -11,8 +11,8 @@ from app.models import Entity
 
 
 class Neo4jStore:
-    NODE_TYPES = {"Material", "Process", "Property", "Parameter", "Publication"}
-    REL_TYPES = {"AFFECTS", "USED_IN", "CITED_BY", "CORRELATES_WITH"}
+    NODE_TYPES = {"Material", "Process", "Property", "Parameter", "Publication", "State"}
+    REL_TYPES = {"AFFECTS", "USED_IN", "CITED_BY", "CORRELATES_WITH", "MODIFIES", "REPORTS", "VALIDATES", "NEXT_PHASE"}
 
     def __init__(self) -> None:
         self._driver = GraphDatabase.driver(
@@ -70,10 +70,12 @@ class Neo4jStore:
                 rel_type = rel.get("type", "CORRELATES_WITH")
                 if rel_type not in self.REL_TYPES:
                     rel_type = "CORRELATES_WITH"
+                src_type = self._guess_label(rel.get("source", ""), entities)
+                tgt_type = self._guess_label(rel.get("target", ""), entities)
                 session.run(
                     f"""
-                    MERGE (a {{name: $source}})
-                    MERGE (b {{name: $target}})
+                    MERGE (a:{src_type} {{name: $source}})
+                    MERGE (b:{tgt_type} {{name: $target}})
                     MERGE (a)-[r:{rel_type}]->(b)
                     SET r.doc_id = $doc_id
                     """,
@@ -82,7 +84,32 @@ class Neo4jStore:
                     doc_id=doc_id,
                 )
 
+    @staticmethod
+    def _guess_label(name: str, entities: list[Entity]) -> str:
+        for e in entities:
+            if e.name == name and e.type in Neo4jStore.NODE_TYPES:
+                return e.type
+        lowered = name.lower()
+        if "recovery" in lowered or "извлеч" in lowered or "kpi" in lowered:
+            return "Property"
+        if "ph" in lowered or "темп" in lowered or "доз" in lowered:
+            return "Parameter"
+        if "флотац" in lowered or "process" in lowered:
+            return "Process"
+        return "Material"
+
+    def upsert_metadata_entities(self, doc_id: str, metadata: dict[str, Any]) -> None:
+        """KPI/lab metadata → узлы графа без LLM."""
+        from app.ingest.entities import _metadata_entities
+
+        entities, relations = _metadata_entities(metadata)
+        if entities:
+            self.upsert_entities(doc_id, entities, relations)
+
     def get_subgraph(self, keywords: list[str], limit: int = 30) -> dict[str, Any]:
+        from app.hypotheses.influence_graph import expand_graph_keywords
+
+        keywords = expand_graph_keywords(keywords)
         nodes: list[dict[str, Any]] = []
         links: list[dict[str, Any]] = []
         if not keywords:
@@ -92,7 +119,11 @@ class Neo4jStore:
             result = session.run(
                 """
                 MATCH (n)
-                WHERE ANY(kw IN $keywords WHERE toLower(n.name) CONTAINS toLower(kw))
+                WHERE ANY(kw IN $keywords WHERE
+                    toLower(coalesce(n.name, '')) CONTAINS toLower(kw)
+                    OR toLower(coalesce(n.title, '')) CONTAINS toLower(kw)
+                    OR toLower(coalesce(n.source, '')) CONTAINS toLower(kw)
+                    OR toLower(coalesce(n.id, '')) CONTAINS toLower(kw))
                 OPTIONAL MATCH (n)-[r]-(m)
                 RETURN DISTINCT n, r, m
                 LIMIT $limit
@@ -132,3 +163,23 @@ class Neo4jStore:
             return True
         except Exception:
             return False
+
+    def get_graph_stats(self) -> dict[str, Any]:
+        """Сводка по графу знаний для /compliance и smoke-тестов."""
+        if not self.is_available():
+            return {
+                "available": False,
+                "nodes": 0,
+                "relationships": 0,
+                "publications": 0,
+            }
+        with self._driver.session() as session:
+            nodes = session.run("MATCH (n) RETURN count(n) AS c").single()["c"]
+            rels = session.run("MATCH ()-[r]->() RETURN count(r) AS c").single()["c"]
+            pubs = session.run("MATCH (p:Publication) RETURN count(p) AS c").single()["c"]
+        return {
+            "available": True,
+            "nodes": int(nodes),
+            "relationships": int(rels),
+            "publications": int(pubs),
+        }
