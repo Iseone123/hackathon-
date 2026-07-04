@@ -13,6 +13,7 @@ from app.hypotheses.context_builder import build_generation_user_prompt, build_r
 from app.hypotheses.enrichment import enrich_hypothesis
 from app.hypotheses.hypothesis_factory import build_hypothesis_from_raw
 from app.hypotheses.problem_input import normalize_problem_constraints
+from app.hypotheses.options import clamp_hypothesis_count
 from app.hypotheses.prompt_sections import build_generation_system
 from app.hypotheses.sanitize import dedupe_key, relax_raw_hypothesis, sanitize_raw_hypothesis
 from app.judge.refiner import HypothesisRefiner
@@ -23,6 +24,7 @@ from app.rag.knowledge_gaps import analyze_knowledge_gaps
 from app.rag.retrieval import RAGRetriever
 from app.rag.source_info import build_retrieval_sources
 from app.scoring.ranker import Ranker
+from app.security.encryption import write_secure_json
 
 
 class HypothesisGenerator:
@@ -47,8 +49,10 @@ class HypothesisGenerator:
         language: str = "ru",
         top_k: int | None = None,
         weights: dict[str, float] | None = None,
+        hypothesis_count: int | None = None,
     ) -> dict[str, Any]:
         problem, constraints = normalize_problem_constraints(problem, constraints)
+        n = clamp_hypothesis_count(hypothesis_count)
         retrieval = self.retriever.retrieve(problem, constraints, top_k)
         knowledge_gaps = analyze_knowledge_gaps(
             problem, constraints, retrieval["chunks"], retrieval.get("keywords")
@@ -62,12 +66,13 @@ class HypothesisGenerator:
             example_dirs=retrieval.get("example_dirs"),
             chunks=retrieval["chunks"],
             brainstorm_topics=retrieval.get("brainstorm_topics"),
+            hypothesis_count=n,
         )
 
         if weights is None:
             weights = get_learned_weights()
 
-        system_prompt = build_generation_system(language)
+        system_prompt = build_generation_system(language, hypothesis_count=n)
         samples = self.llm.complete_json(
             system_prompt,
             user_prompt,
@@ -261,7 +266,4 @@ class HypothesisGenerator:
                 else result.get("judge_summary")
             ),
         }
-        path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
-        )
+        path.write_text(write_secure_json(data), encoding="utf-8")

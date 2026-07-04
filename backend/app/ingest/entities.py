@@ -8,8 +8,8 @@ from typing import Any
 from app.llm_client import YandexLLMClient
 from app.models import Entity
 
-NER_SYSTEM_PROMPT = """You are a materials science NER extractor.
-Extract entities from scientific/technical text in Russian or English.
+NER_SYSTEM_PROMPT = """You are a scientific NER extractor for R&D knowledge bases.
+Extract entities from scientific/technical text in any language (Russian, English, Chinese, etc.).
 Return strict JSON:
 {
   "entities": [
@@ -19,8 +19,11 @@ Return strict JSON:
     {"source": "...", "target": "...", "type": "AFFECTS|USED_IN|CORRELATES_WITH|MODIFIES"}
   ]
 }
-Types: Material (substances, alloys, equipment), Process (flotation, leaching),
-Property (recovery rate, grade), Parameter (pH, temperature, dosage).
+Types:
+- Material (substances, alloys, polymers, composites, equipment, reagents)
+- Process (synthesis, treatment, separation, testing, manufacturing step)
+- Property (target KPI: strength, recovery, purity, cost, durability, etc.)
+- Parameter (pH, temperature, pressure, dosage, concentration, time, dimensions)
 """
 
 

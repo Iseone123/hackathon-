@@ -5,39 +5,22 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.domain.parameters import extract_text_parameters
+from app.domain.profile import extract_topic_labels, infer_kpi_label
 from app.hypotheses.predictive_model import get_predictor
 from app.models import Hypothesis, KnowledgeGap, ResearchAnalysis
 
-_DOMAIN_HINTS: list[tuple[str, str]] = [
-    ("флотация сульфидов", r"флотац|сульфид|собирател"),
-    ("обогащение меди", r"мед|cu|хвост"),
-    ("кислотность пульпы", r"pH|щелоч|кислот"),
-    ("дозирование реагентов", r"кг/т|дозиров|кмц|ксантогенат"),
-    ("золотоизвлечение", r"золот|серебр|цианид|сорбц"),
-]
-
 
 def _chunk_domains(text: str, doc_id: str) -> set[str]:
-    combined = f"{text} {doc_id}".lower()
-    return {label for label, pat in _DOMAIN_HINTS if re.search(pat, combined, re.I)}
+    return set(extract_topic_labels(f"{text} {doc_id}"))
 
 
 def _hypothesis_domains(h: Hypothesis) -> set[str]:
-    combined = f"{h.text} {h.mechanism}".lower()
-    return {label for label, pat in _DOMAIN_HINTS if re.search(pat, combined, re.I)}
+    return set(extract_topic_labels(f"{h.text} {h.mechanism}"))
 
 
 def _parameter_signature(text: str) -> dict[str, float]:
-    sig: dict[str, float] = {}
-    for key, pat in [
-        ("pH", r"pH\s*(\d+(?:\.\d+)?)"),
-        ("dosage", r"(\d+(?:\.\d+)?)\s*(?:кг|г)\s*/?\s*т"),
-        ("recovery", r"извлечени\w*\s*(\d+(?:\.\d+)?)"),
-    ]:
-        m = re.search(pat, text, re.I)
-        if m:
-            sig[key] = float(m.group(1).replace(",", "."))
-    return sig
+    return extract_text_parameters(text)
 
 
 def _find_cross_domain_analogy(
@@ -92,9 +75,9 @@ def _find_cross_domain_analogy(
                 )
 
     return (
-        "Аналогия: механизм сопоставим с типовыми схемами селективной флотации "
-        "сульфидов в слабощелочной среде (учебники по обогащению).",
-        list(hyp_domains)[:2] or ["флотация сульфидов"],
+        f"Аналогия: механизм сопоставим с подходами из корпуса по теме «{infer_kpi_label(h.text)}» "
+        "и смежным процессам в базе знаний.",
+        list(hyp_domains)[:2] or extract_topic_labels(h.text)[:2] or ["процесс"],
     )
 
 
@@ -102,39 +85,42 @@ def _build_counterfactual(
     h: Hypothesis,
     problem: str,
     chunks: list[dict[str, Any]],
-    baseline_recovery: float | None,
-    predicted_recovery: float | None,
+    baseline_value: float | None,
+    predicted_value: float | None,
 ) -> tuple[str, str]:
+    kpi = infer_kpi_label(problem)
     hyp_sig = _parameter_signature(f"{h.text} {h.mechanism}")
     param = "ключевой параметр режима"
     if "pH" in hyp_sig:
         param = f"pH={hyp_sig['pH']}"
     elif "dosage" in hyp_sig:
-        param = f"дозировка {hyp_sig['dosage']} кг/т"
+        param = f"дозировка {hyp_sig['dosage']}"
+    elif "temperature" in hyp_sig:
+        param = f"температура {hyp_sig['temperature']}"
 
     baseline_note = ""
-    if baseline_recovery is not None:
-        baseline_note = f"медиана извлечения по архиву {baseline_recovery:.1f}%"
+    if baseline_value is not None:
+        baseline_note = f"медиана {kpi} по архиву {baseline_value:.2f}"
     elif chunks:
         sigs = [_parameter_signature(c.get("text", "")) for c in chunks[:10]]
-        recoveries = [s["recovery"] for s in sigs if "recovery" in s]
-        if recoveries:
-            avg = sum(recoveries) / len(recoveries)
-            baseline_note = f"среднее извлечение в источниках {avg:.1f}%"
-            baseline_recovery = avg
+        metrics = [s["metric"] for s in sigs if "metric" in s]
+        if metrics:
+            avg = sum(metrics) / len(metrics)
+            baseline_note = f"среднее {kpi} в источниках {avg:.2f}"
+            baseline_value = avg
 
-    if baseline_recovery is not None and predicted_recovery is not None:
+    if baseline_value is not None and predicted_value is not None:
         cf = (
             f"Контрфактуал: при сохранении базового режима ({baseline_note}) "
-            f"прогноз извлечения остаётся ~{baseline_recovery:.1f}%; "
-            f"при внедрении гипотезы ({param}) ML-модель даёт {predicted_recovery:.1f}% "
-            f"(Δ {predicted_recovery - baseline_recovery:+.1f} п.п.). "
+            f"прогноз {kpi} остаётся ~{baseline_value:.2f}; "
+            f"при внедрении гипотезы ({param}) ML-модель даёт {predicted_value:.2f} "
+            f"(Δ {predicted_value - baseline_value:+.2f}). "
             f"Без изменений KPI по «{problem[:55]}…» не достигается."
         )
-        return cf, baseline_note or f"{baseline_recovery:.1f}%"
+        return cf, baseline_note or f"{baseline_value:.2f}"
 
     cf = (
-        f"Контрфактуал: если НЕ менять {param}, сохраняется текущий уровень KPI "
+        f"Контрфактуал: если НЕ менять {param}, сохраняется текущий уровень {kpi} "
         f"по задаче «{problem[:60]}…»"
         + (f" ({baseline_note})" if baseline_note else "")
         + " без целевого прироста."

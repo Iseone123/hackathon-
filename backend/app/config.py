@@ -61,6 +61,14 @@ class Settings(BaseSettings):
     api_port: int = 8000
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
 
+    # Security (локальное развёртывание с конфиденциальными данными)
+    api_auth_enabled: bool = False
+    # Формат: key:role,key2:role2 (роли: viewer | expert | admin)
+    api_keys: str = ""
+    encrypt_hypotheses_at_rest: bool = False
+    # Fernet key: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    data_encryption_key: str = ""
+
     # RAG / generation
     chunk_size: int = 1200
     chunk_overlap: int = 200
@@ -68,6 +76,9 @@ class Settings(BaseSettings):
     retrieval_example_boost: float = 0.35
     retrieval_example_inject: int = 4
     generation_samples: int = 1
+    default_hypothesis_count: int = 5
+    min_hypothesis_count: int = 1
+    max_hypothesis_count: int = 12
     judge_repair_passes: int = 1
     judge_min_output: int = 3
     judge_drop_below_objective: float = 0.40

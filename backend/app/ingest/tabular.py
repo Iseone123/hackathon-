@@ -6,10 +6,11 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.domain.profile import generic_kpi_patterns
+
 # KPI: ищем подстроку в любой ячейке строки (не привязка к колонке A/B)
 _KPI_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"отвальн\w*\s+хвост", re.I), "tailings"),
-    (re.compile(r"итого\s+извлекаем\w*\s+металл", re.I), "recoverable"),
+    *generic_kpi_patterns(),
     (re.compile(r"класс\s+крупност", re.I), "grain_header"),
 )
 
@@ -125,10 +126,10 @@ def detect_header_row(rows: list[list[str]], *, scan_limit: int = 25) -> tuple[i
 
 
 def summarize_sheet_domain(rows: list[list[str]]) -> list[str]:
-    """Доменная сводка (хвосты, крупность) — если паттерны найдены в листе."""
+    """Доменная сводка KPI — универсальные и отраслевые паттерны."""
     lines: list[str] = []
+    metric_rows: dict[str, str] = {}
     tailings_tonnage: str | None = None
-    recoverable_pct: str | None = None
     grain_rows: list[str] = []
     in_grain = False
 
@@ -140,16 +141,18 @@ def summarize_sheet_domain(rows: list[list[str]]) -> list[str]:
         matched = match_row_rule(trimmed)
         if matched:
             rule_id, label, idx = matched
-            if rule_id == "tailings":
-                vals = numeric_cells_after(trimmed, idx)
-                if vals:
-                    tailings_tonnage = vals[0]
-            elif rule_id == "recoverable":
-                vals = numeric_cells_after(trimmed, idx)
+            vals = numeric_cells_after(trimmed, idx)
+            if rule_id == "tailings" and vals:
+                tailings_tonnage = vals[0]
+            elif rule_id == "recoverable" and vals:
                 for v in vals[:4]:
                     if re.search(r"\d", v):
-                        recoverable_pct = v
+                        metric_rows["recoverable"] = v
                         break
+            elif rule_id in {"yield", "strength", "efficiency", "cost", "quality", "viscosity", "conductivity", "density", "temperature"}:
+                if vals:
+                    metric_rows[rule_id] = vals[0]
+                    lines.append(f"- {label}: {vals[0]}")
             elif rule_id == "grain_header":
                 in_grain = True
             continue
@@ -162,18 +165,17 @@ def summarize_sheet_domain(rows: list[list[str]]) -> list[str]:
                 recoverable = vals[1] if len(vals) > 1 else ""
                 display = grain_label if "мкм" in grain_label.lower() else f"{grain_label} мкм"
                 grain_rows.append(
-                    f"- {display}: доля класса {share}%, извлекаемый металл {recoverable}%"
+                    f"- {display}: доля класса {share}%, метрика {recoverable}"
                 )
                 continue
-            # выход из секции крупности
             labels = [t[1].lower() for t in text_cells_in_row(trimmed, limit=3)]
             if any(lbl.startswith("итого") or "раскрыт" in lbl for lbl in labels):
                 in_grain = False
 
     if tailings_tonnage:
-        lines.append(f"- Отвальные хвосты: {tailings_tonnage} т")
-    if recoverable_pct:
-        lines.append(f"- Итого извлекаемый металл в хвостах: {recoverable_pct}%")
+        lines.insert(0, f"- Отвальные хвосты: {tailings_tonnage} т")
+    if metric_rows.get("recoverable"):
+        lines.insert(0, f"- Итого извлекаемый металл в хвостах: {metric_rows['recoverable']}%")
     lines.extend(grain_rows[:10])
     return lines
 

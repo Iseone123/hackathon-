@@ -8,10 +8,18 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.domain.parameters import extract_text_parameters
+from app.domain.profile import infer_kpi_label
 from app.models import Hypothesis
 
-_FEATURE_KEYS = ("pH", "reagent_dosage", "temperature_C")
-_TARGET_KEYS = ("recovery_pct", "Cu_recovery", "yield")
+_TARGET_HINTS = (
+    "recovery", "yield", "strength", "efficiency", "quality", "result",
+    "извлечени", "выход", "прочност", "эффективн", "качеств", "результат",
+)
+_FEATURE_HINTS = (
+    "ph", "dosage", "temperature", "pressure", "concentration", "time",
+    "dose", "temp", "concentr", "дозиров", "температур", "давлен", "концентрац",
+)
 
 
 def _parse_float(value: Any) -> float | None:
@@ -24,19 +32,18 @@ def _parse_float(value: Any) -> float | None:
     return float(match.group(1)) if match else None
 
 
-def _extract_from_text(text: str) -> dict[str, float]:
-    found: dict[str, float] = {}
-    patterns = [
-        ("pH", r"pH\s*[:=]?\s*(\d+(?:\.\d+)?)"),
-        ("reagent_dosage", r"(\d+(?:\.\d+)?)\s*(?:кг|г)\s*/?\s*т"),
-        ("temperature_C", r"температур\w*\s*[:=]?\s*(\d+(?:\.\d+)?)"),
-        ("recovery_pct", r"извлечени\w*\s*[:=]?\s*(\d+(?:\.\d+)?)\s*%"),
-    ]
-    for key, pat in patterns:
-        match = re.search(pat, text, re.I)
-        if match:
-            found[key] = float(match.group(1))
-    return found
+def _normalize_key(key: str) -> str:
+    return re.sub(r"[^a-z0-9_]", "_", key.lower()).strip("_")
+
+
+def _is_target_key(key: str) -> bool:
+    norm = _normalize_key(key)
+    return any(h in norm for h in _TARGET_HINTS)
+
+
+def _is_feature_key(key: str) -> bool:
+    norm = _normalize_key(key)
+    return any(h in norm for h in _FEATURE_HINTS)
 
 
 def _record_from_metadata(meta: dict[str, Any], text: str) -> dict[str, float] | None:
@@ -44,35 +51,84 @@ def _record_from_metadata(meta: dict[str, Any], text: str) -> dict[str, float] |
     for bucket in ("process_parameters", "measurement_results", "experiment_conditions"):
         for key, val in (meta.get(bucket) or {}).items():
             parsed = _parse_float(val)
-            if parsed is not None:
-                norm = key
-                if key in ("Cu_recovery", "yield"):
-                    norm = "recovery_pct"
-                row.setdefault(norm, parsed)
-                if key in _FEATURE_KEYS:
-                    row[key] = parsed
-    row.update(_extract_from_text(text))
-    if "recovery_pct" not in row:
+            if parsed is None:
+                continue
+            norm = _normalize_key(str(key))
+            row[norm] = parsed
+    row.update(extract_text_parameters(text))
+
+    targets = [k for k in row if _is_target_key(k)]
+    features = [k for k in row if _is_feature_key(k) and k not in targets]
+    if not targets:
+        # Любое измерение в measurement_results
+        for key in (meta.get("measurement_results") or {}):
+            norm = _normalize_key(str(key))
+            if norm in row:
+                targets.append(norm)
+    if not targets or not features:
         return None
-    if not any(k in row for k in _FEATURE_KEYS):
+
+    target_key = targets[0]
+    record = {f"target::{target_key}": row[target_key]}
+    for feat in features[:5]:
+        record[f"feature::{feat}"] = row[feat]
+    return record
+
+
+def _flatten_records(records: list[dict[str, float]]) -> tuple[list[str], list[str], list[dict[str, float]]] | None:
+    """Выбирает наиболее частую целевую метрику и общий набор признаков."""
+    target_counts: dict[str, int] = {}
+    feature_counts: dict[str, int] = {}
+    for rec in records:
+        for k in rec:
+            if k.startswith("target::"):
+                target_counts[k] = target_counts.get(k, 0) + 1
+            elif k.startswith("feature::"):
+                feature_counts[k] = feature_counts.get(k, 0) + 1
+    if not target_counts:
         return None
-    return row
+    target_key = max(target_counts, key=target_counts.get)
+    feature_keys = [k for k, c in feature_counts.items() if c >= 2][:5]
+    if not feature_keys:
+        feature_keys = sorted(feature_counts, key=feature_counts.get, reverse=True)[:3]
+    if not feature_keys:
+        return None
+
+    flat: list[dict[str, float]] = []
+    for rec in records:
+        if target_key not in rec:
+            continue
+        row = {"target": rec[target_key]}
+        ok = True
+        for fk in feature_keys:
+            if fk not in rec:
+                ok = False
+                break
+            row[fk.replace("feature::", "")] = rec[fk]
+        if ok:
+            flat.append(row)
+    if len(flat) < 4:
+        return None
+    return target_key.replace("target::", ""), [k.replace("feature::", "") for k in feature_keys], flat
 
 
 class ExperimentPredictor:
-    """Ridge-регрессия: recovery ~ pH + dosage + temperature."""
+    """Ridge-регрессия: target ~ discovered process parameters."""
 
     def __init__(self) -> None:
         self._model: Any = None
         self._r2: float | None = None
-        self._baseline_recovery: float | None = None
+        self._baseline: float | None = None
         self._sample_count = 0
         self._fitted = False
+        self._target_name = ""
+        self._feature_names: list[str] = []
 
     @property
     def model_name(self) -> str:
-        if self._fitted:
-            return "sklearn.Ridge (recovery ~ pH, dosage, temperature)"
+        if self._fitted and self._feature_names:
+            feats = ", ".join(self._feature_names[:4])
+            return f"sklearn.Ridge ({self._target_name} ~ {feats})"
         return ""
 
     @property
@@ -81,7 +137,7 @@ class ExperimentPredictor:
 
     @property
     def baseline_recovery(self) -> float | None:
-        return self._baseline_recovery
+        return self._baseline
 
     def fit_from_corpus(self, processed_dir: Path | None = None) -> bool:
         try:
@@ -106,23 +162,24 @@ class ExperimentPredictor:
                 if row:
                     records.append(row)
 
-        if len(records) < 4:
+        flattened = _flatten_records(records)
+        if not flattened:
             return False
+
+        target_name, feature_names, flat = flattened
+        self._target_name = target_name
+        self._feature_names = feature_names
 
         xs: list[list[float]] = []
         ys: list[float] = []
-        for row in records:
-            xs.append([
-                row.get("pH", 9.0),
-                row.get("reagent_dosage", 0.3),
-                row.get("temperature_C", 25.0),
-            ])
-            ys.append(row["recovery_pct"])
+        for row in flat:
+            xs.append([row[f] for f in feature_names])
+            ys.append(row["target"])
 
         x_arr = np.array(xs, dtype=float)
         y_arr = np.array(ys, dtype=float)
-        self._baseline_recovery = float(np.median(y_arr))
-        self._sample_count = len(records)
+        self._baseline = float(np.median(y_arr))
+        self._sample_count = len(flat)
 
         scaler = StandardScaler()
         x_scaled = scaler.fit_transform(x_arr)
@@ -136,17 +193,19 @@ class ExperimentPredictor:
 
     def _hypothesis_features(self, h: Hypothesis) -> dict[str, float]:
         text = f"{h.text} {h.mechanism}"
-        feats = _extract_from_text(text)
-        return {
-            "pH": feats.get("pH", 9.0),
-            "reagent_dosage": feats.get("reagent_dosage", 0.3),
-            "temperature_C": feats.get("temperature_C", 25.0),
-        }
+        feats = extract_text_parameters(text)
+        defaults = {"ph": 7.0, "dosage": 0.3, "temperature": 25.0, "pressure": 0.1}
+        defaults.update({k.lower(): v for k, v in feats.items()})
+        out: dict[str, float] = {}
+        for name in self._feature_names:
+            norm = _normalize_key(name)
+            out[name] = defaults.get(norm, defaults.get(name, 1.0))
+        return out
 
     def predict_for_hypothesis(
         self, h: Hypothesis, baseline_features: dict[str, float] | None = None
     ) -> tuple[float | None, float | None, list[str], str, float]:
-        """Возвращает (predicted_recovery, delta_pct, patterns, notes, score)."""
+        """Возвращает (predicted_value, delta, patterns, notes, score)."""
         if not self._fitted or self._model is None:
             return None, None, [], "ML-модель не обучена (мало исторических экспериментов)", 0.45
 
@@ -154,27 +213,28 @@ class ExperimentPredictor:
 
         model, scaler = self._model
         hyp_feats = self._hypothesis_features(h)
-        base = baseline_features or {"pH": 8.5, "reagent_dosage": 0.5, "temperature_C": 25.0}
+        base = baseline_features or {name: hyp_feats.get(name, 1.0) for name in self._feature_names}
 
-        x_hyp = np.array([[hyp_feats["pH"], hyp_feats["reagent_dosage"], hyp_feats["temperature_C"]]])
-        x_base = np.array([[base["pH"], base["reagent_dosage"], base["temperature_C"]]])
+        x_hyp = np.array([[hyp_feats.get(n, 1.0) for n in self._feature_names]])
+        x_base = np.array([[base.get(n, 1.0) for n in self._feature_names]])
         pred_hyp = float(model.predict(scaler.transform(x_hyp))[0])
         pred_base = float(model.predict(scaler.transform(x_base))[0])
-        baseline = self._baseline_recovery or pred_base
+        baseline = self._baseline or pred_base
         delta = pred_hyp - baseline
 
+        kpi_label = infer_kpi_label(h.text)
         patterns = [
-            f"pH {hyp_feats['pH']} → прогноз извлечения {pred_hyp:.1f}%",
-            f"базовый режим pH {base['pH']} → {pred_base:.1f}%",
-            f"Δ к медиане корпуса ({baseline:.1f}%): {delta:+.1f} п.п.",
+            f"Прогноз {kpi_label}: {pred_hyp:.2f} (гипотеза)",
+            f"Базовый режим: {pred_base:.2f}",
+            f"Δ к медиане корпуса ({baseline:.2f}): {delta:+.2f}",
         ]
         score = max(0.05, min(0.95, 0.5 + delta / 20.0))
         if self._r2 is not None:
             score = max(0.05, min(0.95, score * (0.5 + 0.5 * max(0, self._r2))))
 
         notes = (
-            f"Ridge R²={self._r2:.2f}, n={self._sample_count}; "
-            f"прогноз {pred_hyp:.1f}% vs база {pred_base:.1f}%"
+            f"Ridge R²={self._r2:.2f}, n={self._sample_count}, target={self._target_name}; "
+            f"прогноз {pred_hyp:.2f} vs база {pred_base:.2f}"
         )
         return pred_hyp, delta, patterns, notes, score
 

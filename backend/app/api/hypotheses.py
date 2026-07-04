@@ -39,6 +39,7 @@ def generate_hypotheses(request: GenerateRequest) -> GenerateResponse:
             language=request.language,
             top_k=request.top_k,
             weights=request.weights,
+            hypothesis_count=request.hypothesis_count,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

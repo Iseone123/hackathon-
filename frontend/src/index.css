@@ -218,3 +218,67 @@ button.secondary:hover {
   font-size: 0.8rem;
   color: #64748b;
 }
+
+.roadmap-editor {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.roadmap-gantt {
+  margin-bottom: 12px;
+}
+
+.gantt-row {
+  margin-bottom: 10px;
+}
+
+.gantt-label {
+  font-size: 0.85rem;
+  margin-bottom: 4px;
+}
+
+.gantt-track {
+  background: #e2e8f0;
+  border-radius: 6px;
+  height: 22px;
+  position: relative;
+}
+
+.gantt-bar {
+  position: absolute;
+  top: 0;
+  height: 22px;
+  background: #2563eb;
+  border-radius: 6px;
+  min-width: 8%;
+}
+
+.roadmap-step-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+  background: #f8fafc;
+}
+
+.roadmap-step-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.roadmap-step-card input[type='text'],
+.roadmap-step-card input:not([type='range']) {
+  width: 100%;
+  padding: 8px;
+  margin-bottom: 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+}
+
+.roadmap-step-card input[type='range'] {
+  width: 100%;
+  margin-bottom: 8px;
+}

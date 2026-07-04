@@ -5,8 +5,7 @@ from __future__ import annotations
 import streamlit as st
 
 from graph_viz import render_influence_graph_html
-from hypothesis_api import download_export, submit_feedback, update_roadmap
-from roadmap_viz import render_roadmap_timeline_html
+from hypothesis_api import download_export, submit_feedback
 from ui.tables import hypotheses_table, sorted_hypotheses
 
 
@@ -238,70 +237,16 @@ def render_tab_results() -> None:
                 st.info(bc["narrative"].replace("**", ""))
 
         sr = h.get("structured_roadmap") or []
-        if sr:
-            st.markdown("**Конструктор дорожной карты**")
-            timeline = []
-            cursor = 0
-            for s in sorted(sr, key=lambda x: x.get("step_order", 0)):
-                dur = int(s.get("duration_days", 7))
-                timeline.append({
-                    "step": s.get("step_order"),
-                    "title": s.get("title", "")[:40],
-                    "start_day": cursor,
-                    "duration_days": dur,
-                    "end_day": cursor + dur,
-                    "resources": ", ".join(s.get("resources") or [])[:60],
-                })
-                cursor += dur
-            html = render_roadmap_timeline_html(timeline, cursor)
-            if html:
-                st.components.v1.html(html, height=160 + 40 * len(timeline), scrolling=False)
+        if sr or h.get("verification_roadmap"):
+            from ui.roadmap_editor import render_roadmap_constructor
 
-            edit_rows = [
-                {
-                    "step_order": s.get("step_order", i + 1),
-                    "title": s.get("title", ""),
-                    "duration_days": s.get("duration_days", 7),
-                    "resources": ", ".join(s.get("resources") or []),
-                    "success_criteria": s.get("success_criteria", ""),
-                    "failure_criteria": s.get("failure_criteria", ""),
-                }
-                for i, s in enumerate(sr)
-            ]
-            edited = st.data_editor(
-                edit_rows,
-                use_container_width=True,
-                num_rows="dynamic",
-                key=f"roadmap_edit_{h['id']}",
-            )
-            if st.button("Сохранить roadmap", key=f"save_roadmap_{h['id']}"):
-                steps_payload = []
-                edit_data = edited.to_dict("records") if hasattr(edited, "to_dict") else edited
-                for row in edit_data:
-                    steps_payload.append({
-                        "step_order": int(row.get("step_order", 1)),
-                        "title": str(row.get("title", "")),
-                        "description": str(row.get("title", "")),
-                        "duration_days": int(row.get("duration_days", 7)),
-                        "resources": [
-                            r.strip()
-                            for r in str(row.get("resources", "")).split(",")
-                            if r.strip()
-                        ],
-                        "success_criteria": str(row.get("success_criteria", "")),
-                        "failure_criteria": str(row.get("failure_criteria", "")),
-                        "depends_on": [],
-                    })
-                try:
-                    updated = update_roadmap(h["id"], steps_payload)
-                    st.session_state.result["hypotheses"] = [
-                        updated if x["id"] == h["id"] else x
-                        for x in st.session_state.result["hypotheses"]
-                    ]
-                    st.success("Roadmap сохранён")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(str(exc))
+            def _on_roadmap_saved(updated: dict) -> None:
+                st.session_state.result["hypotheses"] = [
+                    updated if x["id"] == h["id"] else x
+                    for x in st.session_state.result["hypotheses"]
+                ]
+
+            render_roadmap_constructor(h, on_saved=_on_roadmap_saved)
 
         if h.get("sources"):
             st.markdown("**Источники гипотезы (цитаты LLM):**")

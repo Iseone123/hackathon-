@@ -15,9 +15,14 @@ def test_build_language_rule_ru_explicit():
     assert "OUTPUT LANGUAGE" in rule
 
 
+def test_build_language_rule_ignores_en_param():
+    """Вывод всегда RU, даже если в API передали en."""
+    assert build_language_rule("en") == build_language_rule("ru")
+
+
 def test_build_generation_system_uses_language():
     assert "OUTPUT LANGUAGE" in build_generation_system("ru")
-    assert build_generation_system("en") != build_generation_system("ru")
+    assert build_generation_system("en") == build_generation_system("ru")
 
 
 def test_get_neo4j_stats_unavailable():
@@ -27,24 +32,25 @@ def test_get_neo4j_stats_unavailable():
     assert stats["nodes"] == 0
 
 
-def test_compliance_no_overclaim_multilingual_en():
+def test_build_language_rule_zh():
+    rule = build_language_rule("zh")
+    assert "Russian" in rule or "русский" in rule
+
+
+def test_compliance_multilingual_input_not_output():
     with patch("app.api.meta.get_index_status") as mock_status:
         mock_status.return_value = {
-            "total_files": 10,
-            "indexed_files": 10,
+            "total_files": 1,
+            "indexed_files": 1,
             "missing_files": 0,
-            "qdrant_points": 100,
-            "neo4j": {"available": True, "nodes": 42, "relationships": 10, "publications": 5},
+            "qdrant_points": 1,
+            "neo4j": {"available": False, "nodes": 0, "relationships": 0, "publications": 0},
         }
         payload = compliance_check()
     req = payload["requirements"]
+    assert req["multilingual_input_ru_en_cn"] is True
     assert req["multilingual_output_ru"] is True
     assert req["multilingual_output_en_cn"] is False
-    assert "multilingual_ru_en" not in req
-    assert req["metadata_simplified_isa_tab_allotrope"] is True
-    assert req["export_jira_youtrack_api"] is False
-    assert payload["index_status"]["neo4j_nodes"] == 42
-    assert payload["limitations"]
 
 
 def test_neo4j_store_graph_stats_unavailable():

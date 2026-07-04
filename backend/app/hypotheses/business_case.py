@@ -5,22 +5,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.domain.profile import infer_kpi_label
 from app.models import BusinessCase, Hypothesis
 
 
 def _extract_target_kpi(problem: str) -> str:
-    lowered = problem.lower()
-    for label, pat in [
-        ("извлечение металла", r"извлечени\w+"),
-        ("себестоимость", r"себестоим\w+"),
-        ("качество концентрата", r"качеств\w+\s+концентрат"),
-        ("жаропрочность", r"жаропроч\w+"),
-        ("прочность", r"прочност\w+"),
-    ]:
-        if re.search(pat, lowered):
-            return label
-    words = re.findall(r"[а-яёa-z]{6,}", lowered)
-    return words[0] if words else "целевой KPI"
+    return infer_kpi_label(problem)
 
 
 def _extract_delta_pct(h: Hypothesis, predicted_delta: float | None) -> float | None:
@@ -28,9 +18,10 @@ def _extract_delta_pct(h: Hypothesis, predicted_delta: float | None) -> float | 
         return round(max(-5.0, min(15.0, predicted_delta)), 2)
     text = f"{h.text} {h.reasoning}"
     kpi_patterns = [
-        r"(?:извлечени\w*|увелич\w*|повыс\w*|улучш\w*|сниз\w*)\w*[^.\n]{0,40}?на\s+(\d+(?:[.,]\d+)?)\s*%",
+        r"(?:увелич\w*|повыс\w*|улучш\w*|сниз\w*|increase|improve|reduce)\w*[^.\n]{0,40}?на\s+(\d+(?:[.,]\d+)?)\s*%",
         r"прирост\w*\s*(\d+(?:[.,]\d+)?)\s*%",
         r"Δ\s*(\d+(?:[.,]\d+)?)\s*%",
+        r"by\s+(\d+(?:[.,]\d+)?)\s*%",
     ]
     for pat in kpi_patterns:
         match = re.search(pat, text, re.I)
@@ -50,12 +41,15 @@ def _extract_baseline(chunks: list[dict[str, Any]]) -> str | None:
         for pat in [
             r"извлечени\w*\s*[:=]?\s*(\d+(?:[.,]\d+)?)\s*%",
             r"recovery\s*[:=]?\s*(\d+(?:[.,]\d+)?)",
+            r"strength\s*[:=]?\s*(\d+(?:[.,]\d+)?)",
+            r"yield\s*[:=]?\s*(\d+(?:[.,]\d+)?)",
+            r"efficien\w*\s*[:=]?\s*(\d+(?:[.,]\d+)?)\s*%?",
         ]:
             for m in re.finditer(pat, chunk.get("text", ""), re.I):
                 values.append(float(m.group(1).replace(",", ".")))
     if values:
         avg = sum(values) / len(values)
-        return f"{avg:.1f}% (среднее по базе знаний, n={len(values)})"
+        return f"{avg:.1f} (среднее по базе знаний, n={len(values)})"
     return None
 
 
@@ -63,24 +57,29 @@ def _estimate_economics(
     delta_pct: float | None,
     constraints: str,
     feasibility: float,
+    target_kpi: str,
 ) -> tuple[float | None, float | None, float | None, float | None, float | None]:
-    """Упрощённая модель для флотации хвостов (руб/год)."""
+    """Упрощённая модель экономического эффекта (руб/год) — масштабируется по KPI."""
     if delta_pct is None or delta_pct <= 0:
         return None, None, None, None, None
 
-    # Допущения: 500 тыс. т хвостов/год, 0.25% Cu, цена Cu 650 руб/кг
-    tonnage = 500_000.0
-    grade_pct = 0.25
-    metal_price_rub_kg = 650.0
+    scale = 1.0
+    if re.search(r"извлечени|recovery|yield|металл", target_kpi, re.I):
+        scale = 1.0
+    elif re.search(r"себестоим|cost", target_kpi, re.I):
+        scale = 0.7
+    else:
+        scale = 0.5
+
+    annual_benefit_base = 2_000_000.0 * scale * (delta_pct / 3.0)
     if re.search(r"без\s+капитал", constraints, re.I):
         capex = 150_000.0
     else:
         capex = 800_000.0
 
-    extra_metal_t = tonnage * (grade_pct / 100) * (delta_pct / 100)
-    revenue = extra_metal_t * 1000 * metal_price_rub_kg
-    savings = revenue * 0.15  # снижение реагентов
-    opex = capex * 0.2 + (10 - feasibility) * 50_000
+    revenue = annual_benefit_base * 0.75
+    savings = annual_benefit_base * 0.25
+    opex = capex * 0.2 + (10 - feasibility) * 30_000
     annual_benefit = revenue + savings
     payback = (capex / annual_benefit) * 12 if annual_benefit > 0 else None
     roi = (annual_benefit - opex) / capex if capex > 0 else None
@@ -99,7 +98,7 @@ def build_business_case(
     baseline = _extract_baseline(chunks)
     delta = _extract_delta_pct(h, predicted_delta_pct)
     revenue, savings, capex, payback, roi = _estimate_economics(
-        delta, constraints, h.feasibility_score
+        delta, constraints, h.feasibility_score, target_kpi
     )
 
     narrative_parts = [
@@ -111,8 +110,8 @@ def build_business_case(
         narrative_parts.append(f"Ожидаемый прирост: **+{delta:.1f} п.п.**")
     if revenue is not None:
         narrative_parts.append(
-            f"Оценка доп. выручки: **{revenue:,.0f} руб/год**; "
-            f"экономия реагентов: **{savings:,.0f} руб/год**."
+            f"Оценка экономического эффекта: **{revenue:,.0f} руб/год** (выручка/эффект); "
+            f"экономия: **{savings:,.0f} руб/год**."
         )
     if payback is not None and roi is not None:
         narrative_parts.append(

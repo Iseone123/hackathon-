@@ -8,7 +8,7 @@
 
 1. **Ingest** — парсинг PDF, DOCX, XLSX, изображений (OCR), индексация в Qdrant + Neo4j
 2. **RAG** — гибридный поиск с приоритетом материалов предприятия (`Пример 1–4`)
-3. **Генерация** — 3 гипотезы с цитатами, механизмом, roadmap и графом влияния
+3. **Генерация** — N гипотез (по умолчанию 5, настраивается 1–12) с цитатами, механизмом, roadmap и графом влияния
 4. **Судья** — независимая валидация: чеклист ТЗ, overlap цитат, ограничения, LLM-оценки
 5. **Прозрачность** — в UI видно **почему судья одобрил или отклонил** (`decision_rationale`)
 6. **JQI** — целевая метрика качества прогона (цель ≥ 75)
@@ -100,7 +100,8 @@ curl -X POST http://localhost:8000/hypotheses/generate \
   -H "Content-Type: application/json" \
   -d '{
     "problem": "Повышение извлечения меди из хвостов КГМК при оптимизации флотации",
-    "constraints": "pH 8-10, без капитальных вложений, TRL 4"
+    "constraints": "pH 8-10, без капитальных вложений, TRL 4",
+    "hypothesis_count": 5
   }'
 ```
 
@@ -168,6 +169,9 @@ python scripts/analyze_accuracy.py
 
 ```
 backend/app/
+  domain/          # profile, parameters — универсальные KPI/параметры
+  feedback/        # learner, bandit, scores, store
+  hypotheses/      # generator, prompt_constants, prompt_sections, options
   ingest/          # parser, tabular, docx_parse, pipeline
   rag/             # retrieval, example boost, text_overlap
   hypotheses/      # generator, prompts, sanitize
