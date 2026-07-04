@@ -46,6 +46,22 @@ def build_rag_context(
         parts.append("\nKnowledge gaps (address in hypotheses where possible):")
         for g in knowledge_gaps[:5]:
             parts.append(f"  - [{g.severity}] {g.topic}: {g.suggested_action}")
+    trace = retrieval.get("agentic_trace") or {}
+    if trace.get("enabled"):
+        parts.append("\nAgentic RAG trace:")
+        coverage = trace.get("coverage") or {}
+        if coverage:
+            parts.append(
+                "  - coverage: "
+                f"{coverage.get('chunks', 0)} chunks, "
+                f"{coverage.get('documents', 0)} docs, "
+                f"steps={', '.join(coverage.get('covered_steps') or [])}"
+            )
+        for step in (trace.get("steps") or [])[:6]:
+            status = step.get("error") or f"{step.get('chunks', 0)} chunks"
+            parts.append(
+                f"  - {step.get('name')}: {step.get('intent')} -> {status}"
+            )
     return "\n\n".join(parts)
 
 

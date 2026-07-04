@@ -40,6 +40,29 @@ export interface SourceRef {
   url?: string;
 }
 
+export interface RetrievalSource {
+  doc_id: string;
+  title?: string;
+  source_path?: string;
+  chunks_in_context: number;
+  max_score: number;
+}
+
+export interface KnowledgeGap {
+  topic: string;
+  severity: string;
+  evidence: string;
+  suggested_action: string;
+}
+
+export interface AgenticTrace {
+  enabled: boolean;
+  fallback?: boolean;
+  plan?: Array<{ name: string; intent: string; query: string; priority: number }>;
+  steps?: Array<{ name: string; intent: string; query: string; chunks: number; documents?: string[]; error?: string }>;
+  coverage?: { chunks: number; documents: number; covered_steps: string[] };
+}
+
 export interface RiskScores {
   technical: number;
   economic: number;
@@ -86,6 +109,9 @@ export interface GenerateResponse {
   hypotheses: Hypothesis[];
   conflicts_detected: string[];
   retrieval_doc_ids: string[];
+  retrieval_sources?: RetrievalSource[];
+  knowledge_gaps?: KnowledgeGap[];
+  agentic_trace?: AgenticTrace;
   judge_summary?: JudgeSummary;
 }
 

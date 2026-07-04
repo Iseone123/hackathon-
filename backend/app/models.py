@@ -261,6 +261,7 @@ class GenerateResponse(BaseModel):
     retrieval_doc_ids: list[str] = Field(default_factory=list)
     retrieval_sources: list[RetrievalSource] = Field(default_factory=list)
     knowledge_gaps: list[KnowledgeGap] = Field(default_factory=list)
+    agentic_trace: dict[str, Any] | None = None
     judge_summary: JudgeSummary | None = None
 
 

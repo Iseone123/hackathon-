@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     retrieval_top_k: int = 12
     retrieval_example_boost: float = 0.35
     retrieval_example_inject: int = 4
+    agentic_rag_enabled: bool = True
+    agentic_rag_max_steps: int = 5
+    agentic_rag_step_top_k: int = 6
     generation_samples: int = 1
     judge_repair_passes: int = 1
     judge_min_output: int = 3

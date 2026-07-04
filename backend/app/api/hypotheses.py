@@ -68,6 +68,7 @@ def generate_hypotheses(request: GenerateRequest) -> GenerateResponse:
         retrieval_doc_ids=result["retrieval_doc_ids"],
         retrieval_sources=result.get("retrieval_sources") or [],
         knowledge_gaps=result.get("knowledge_gaps") or [],
+        agentic_trace=result.get("agentic_trace"),
         judge_summary=result.get("judge_summary"),
     )
 

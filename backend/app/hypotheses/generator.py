@@ -21,6 +21,7 @@ from app.judge.refiner import HypothesisRefiner
 from app.judge.validator import HypothesisJudge
 from app.llm_client import YandexLLMClient
 from app.models import Hypothesis
+from app.rag.agentic import AgenticRAGRetriever
 from app.rag.knowledge_gaps import analyze_knowledge_gaps
 from app.rag.retrieval import RAGRetriever
 from app.rag.source_info import build_retrieval_sources
@@ -41,6 +42,7 @@ class HypothesisGenerator:
         self.ranker = ranker or Ranker(llm=self.llm)
         self.judge = judge or HypothesisJudge(llm=self.llm)
         self.refiner = refiner or HypothesisRefiner(llm=self.llm)
+        self.agentic_retriever = AgenticRAGRetriever(self.retriever)
 
     def generate(
         self,
@@ -51,7 +53,7 @@ class HypothesisGenerator:
         weights: dict[str, float] | None = None,
     ) -> dict[str, Any]:
         problem, constraints = normalize_problem_constraints(problem, constraints)
-        retrieval = self.retriever.retrieve(problem, constraints, top_k)
+        retrieval = self.agentic_retriever.retrieve(problem, constraints, top_k)
         knowledge_gaps = analyze_knowledge_gaps(
             problem, constraints, retrieval["chunks"], retrieval.get("keywords")
         )
@@ -100,6 +102,7 @@ class HypothesisGenerator:
             "retrieval_doc_ids": list({c["doc_id"] for c in retrieval["chunks"]}),
             "retrieval_sources": build_retrieval_sources(retrieval["chunks"]),
             "knowledge_gaps": knowledge_gaps,
+            "agentic_trace": retrieval.get("agentic_trace"),
             "judge_summary": judge_summary,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -267,6 +270,7 @@ class HypothesisGenerator:
                 g.model_dump(mode="json") if hasattr(g, "model_dump") else g
                 for g in result.get("knowledge_gaps", [])
             ],
+            "agentic_trace": result.get("agentic_trace"),
             "judge_summary": (
                 result["judge_summary"].model_dump()
                 if result.get("judge_summary") and hasattr(result["judge_summary"], "model_dump")
