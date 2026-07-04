@@ -50,6 +50,7 @@ Rules:
     + FORMULATION_RULES_SHORT
     + """
 - min 2 roadmap steps with resources and success/failure criteria
+- if enterprise brainstorm list in prompt: hypotheses 1–2 MUST be equipment/process from that list, cite [ПРИМЕР] doc_id
 - reasoning must explain the snippet (translate foreign snippets into Russian)
 """
 )

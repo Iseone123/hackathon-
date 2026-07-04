@@ -10,9 +10,10 @@ from app.db.neo4j_store import Neo4jStore
 from app.db.qdrant_store import QdrantStore
 from app.ingest.text_utils import text_quality_score
 from app.llm_client import YandexLLMClient
-from app.rag.example_context import (
+from app.rag.example_registry import infer_example_dirs
+from app.rag.example_retrieval import (
+    build_mandatory_chunks,
     example_source_boost,
-    infer_example_dirs,
     kpi_chunk_boost,
     merge_example_chunks,
     score_example_chunk,
@@ -41,6 +42,7 @@ class RAGRetriever:
         k = top_k or settings.retrieval_top_k
         keywords = self._extract_keywords(problem + " " + constraints)
         example_dirs = infer_example_dirs(problem, constraints)
+        brainstorm_topics, mandatory_chunks = build_mandatory_chunks(example_dirs, self.qdrant)
 
         query_vector = self.llm.embed_query(query)
         # Берём больше кандидатов для rerank и фильтрации шума OCR
@@ -49,11 +51,17 @@ class RAGRetriever:
         filtered = self._filter_low_quality(ranked)
         deduped = self._deduplicate_hits(filtered)
 
-        example_hits = self._fetch_example_chunks(example_dirs, keywords)
+        example_hits: list[dict[str, Any]] = []
+        if len(mandatory_chunks) < 2:
+            example_hits = self._fetch_example_chunks(example_dirs, keywords)
+        inject_limit = max(
+            settings.retrieval_example_inject,
+            len(mandatory_chunks) + 2,
+        )
         merged = merge_example_chunks(
             deduped,
-            example_hits,
-            max_inject=settings.retrieval_example_inject,
+            mandatory_chunks + example_hits,
+            max_inject=inject_limit,
         )[:k]
         expanded = self._expand_neighbors(merged, k)
 
@@ -66,6 +74,7 @@ class RAGRetriever:
             "conflicts": conflicts,
             "keywords": keywords,
             "example_dirs": example_dirs,
+            "brainstorm_topics": brainstorm_topics,
             "qdrant_total": self.qdrant.count_points(),
         }
 

@@ -63,14 +63,16 @@ FORMULATION_RULES = """CRITICAL — formulation (judge checklist):
 - Do NOT propose: new plants, contact tanks, mill relining, crushers — unless snippet supports AND constraints allow."""
 
 SOURCE_STRATEGY = """CRITICAL — two types of sources in context:
-- Blocks tagged [ПРИМЕР] or starting with «# KPI-сводка»: enterprise materials (brainstorm, Excel KPIs).
+- Blocks tagged [ПРИМЕР] or starting with «# KPI-сводка»: enterprise materials (brainstorm docx, Excel KPIs).
   Use for equipment/process directions — snippet from the SAME block.
 - Blocks without tag: textbooks/regulations — reagent dosages, mechanisms.
 
-Diversity (when [ПРИМЕР] / KPI blocks exist):
-- Hypothesis 1: grounded in [ПРИМЕР] or KPI-сводка (cite doc_id from that block).
-- Hypothesis 2: reagent/process from technical source (different doc_id).
-- Hypothesis 3: third distinct mechanism, different doc_id when possible."""
+Diversity when [ПРИМЕР] / KPI / enterprise brainstorm list exists:
+- Hypothesis 1: MUST be an equipment/process direction from enterprise brainstorm — cite [ПРИМЕР] doc_id.
+- Hypothesis 2: MUST be a DIFFERENT equipment/process direction from the same brainstorm list — cite [ПРИМЕР] doc_id.
+- Hypothesis 3: third distinct brainstorm direction OR one reagent from textbook if brainstorm list has <3 items.
+- FORBIDDEN: three reagent-only hypotheses when enterprise brainstorm equipment list is provided.
+- Use KPI-сводка block for baseline % and tonnage in reasoning when citing Excel doc_id."""
 
 SCORING_GUIDE = """Scores: novelty=higher is more novel, feasibility=higher is easier to test,
 expected_value=higher is more valuable, risk=higher is riskier.
@@ -169,6 +171,21 @@ def build_case_hints(problem: str, constraints: str) -> str:
     return "\nCase hints (ground every claim in snippet):\n" + "\n".join(f"- {h}" for h in hints)
 
 
+def build_brainstorm_mandate(topics: list[str]) -> str:
+    """Обязательные направления мозгового штурма предприятия."""
+    if not topics:
+        return ""
+    lines = "\n".join(f"  {i + 1}. {t}" for i, t in enumerate(topics[:8]))
+    return (
+        "\nMANDATORY enterprise brainstorm directions (from [ПРИМЕР] docx — pick for hypotheses 1–2):\n"
+        f"{lines}\n"
+        "- Hypothesis 1: direction #1 (or #2) — equipment/process, measurable ≥3%, cite [ПРИМЕР] doc_id.\n"
+        "- Hypothesis 2: a DIFFERENT direction from this list — cite [ПРИМЕР] doc_id.\n"
+        "- Hypothesis 3: third direction here OR textbook reagent only if list has fewer than 3 items.\n"
+        "- Do NOT output three reagent-only hypotheses when this equipment list is present."
+    )
+
+
 def build_source_strategy_hint(example_dirs: list[str], chunks: list[dict]) -> str:
     """Краткая стратегия источников для user prompt."""
     has_example = bool(example_dirs) and any(
@@ -180,8 +197,8 @@ def build_source_strategy_hint(example_dirs: list[str], chunks: list[dict]) -> s
         return ""
     dirs = ", ".join(example_dirs)
     return (
-        f"\nSource strategy: blocks [ПРИМЕР] from {dirs} are mandatory for hypothesis 1. "
-        "Hypotheses 2–3 — technical sources (reagents, flotation)."
+        f"\nSource strategy: blocks [ПРИМЕР] from {dirs} are mandatory for hypotheses 1–2 (equipment/process). "
+        "Hypothesis 3 — third brainstorm direction or textbook reagent."
     )
 
 
@@ -211,5 +228,5 @@ def build_generation_user_footer() -> str:
         "Foreign-language sources: extract knowledge → express hypothesis in Russian; snippet verbatim.\n\n"
         f"{CITATION_RULES_SHORT}\n"
         f"{FORMULATION_RULES_SHORT}\n"
-        "- If [ПРИМЕР] or KPI-сводка blocks exist: hypothesis 1 MUST cite that doc_id."
+        "- If [ПРИМЕР] or KPI-сводка blocks exist: hypotheses 1–2 MUST cite enterprise [ПРИМЕР] doc_id (equipment/process)."
     )

@@ -9,13 +9,11 @@ from typing import Any
 
 from app.config import settings
 from app.feedback.learner import get_learned_weights
-from app.hypotheses.business_case import build_business_case
 from app.hypotheses.context_builder import build_generation_user_prompt, build_rag_context
+from app.hypotheses.enrichment import enrich_hypothesis
 from app.hypotheses.hypothesis_factory import build_hypothesis_from_raw
 from app.hypotheses.problem_input import normalize_problem_constraints
 from app.hypotheses.prompt_sections import build_generation_system
-from app.hypotheses.research_analysis import build_research_analysis
-from app.hypotheses.roadmap_builder import build_structured_roadmap, roadmap_to_text
 from app.hypotheses.sanitize import dedupe_key, relax_raw_hypothesis, sanitize_raw_hypothesis
 from app.judge.refiner import HypothesisRefiner
 from app.judge.validator import HypothesisJudge
@@ -63,6 +61,7 @@ class HypothesisGenerator:
             retrieval["conflicts"],
             example_dirs=retrieval.get("example_dirs"),
             chunks=retrieval["chunks"],
+            brainstorm_topics=retrieval.get("brainstorm_topics"),
         )
 
         if weights is None:
@@ -167,20 +166,15 @@ class HypothesisGenerator:
                     fixed, h.generation_id or "", 0, chunks, problem
                 )
                 repaired.id = h.id
-                repaired.structured_roadmap = build_structured_roadmap(repaired)
-                repaired.verification_roadmap = roadmap_to_text(repaired.structured_roadmap)
-                repaired.research_analysis = build_research_analysis(
-                    repaired, problem, chunks, []
-                )
-                ra = repaired.research_analysis
-                repaired.business_case = build_business_case(
+                repaired = enrich_hypothesis(
                     repaired,
-                    problem,
-                    constraints,
-                    chunks,
-                    predicted_delta_pct=ra.predicted_kpi_delta_pct if ra else None,
+                    problem=problem,
+                    constraints=constraints,
+                    chunks=chunks,
+                    knowledge_gaps=[],
+                    ranker=self.ranker,
+                    weights=weights,
                 )
-                repaired = self.ranker.score_hypothesis(repaired, weights=weights)
                 updated.append(repaired)
                 changed = True
             else:
@@ -201,21 +195,15 @@ class HypothesisGenerator:
         gaps = knowledge_gaps or []
         for i, raw in enumerate(merged):
             h = build_hypothesis_from_raw(raw, generation_id, i, chunks, problem)
-            h.structured_roadmap = build_structured_roadmap(h)
-            h.verification_roadmap = roadmap_to_text(h.structured_roadmap)
-            h.research_analysis = build_research_analysis(h, problem, chunks, gaps)
-            ra = h.research_analysis
-            h.business_case = build_business_case(
+            h = enrich_hypothesis(
                 h,
-                problem,
-                constraints,
-                chunks,
-                predicted_delta_pct=ra.predicted_kpi_delta_pct if ra else None,
-                model_confidence=(
-                    "high" if ra and ra.model_r2 and ra.model_r2 > 0.3 else "medium"
-                ),
+                problem=problem,
+                constraints=constraints,
+                chunks=chunks,
+                knowledge_gaps=gaps,
+                ranker=self.ranker,
+                weights=weights,
             )
-            h = self.ranker.score_hypothesis(h, weights=weights)
             hypotheses.append(h)
         return self.ranker.rank(hypotheses, weights=weights)
 

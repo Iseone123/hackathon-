@@ -25,7 +25,7 @@ def test_build_case_hints_kgmk_from_yaml():
         "pH 8-10, без капитальных вложений",
     )
     assert "КГМК" in hints
-    assert "магнитная" in hints.lower() or "мозгового" in hints.lower() or "Excel" in hints
+    assert "brainstorm" in hints.lower() or "equipment" in hints.lower() or "Excel" in hints
 
 
 def test_source_strategy_hint_when_examples_present():
@@ -33,7 +33,7 @@ def test_source_strategy_hint_when_examples_present():
         ["Пример 1"],
         [{"source": "Пример 1/Гипотезы КГМК.docx", "from_example": True}],
     )
-    assert "hypothesis 1" in hint.lower()
+    assert "hypotheses 1" in hint.lower()
     assert "Пример 1" in hint
 
 

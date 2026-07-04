@@ -6,6 +6,7 @@ from typing import Any
 
 from app.feedback.learner import get_generation_hints
 from app.hypotheses.prompt_sections import (
+    build_brainstorm_mandate,
     build_case_hints,
     build_generation_user_footer,
     build_source_strategy_hint,
@@ -23,8 +24,10 @@ def build_rag_context(
     parts: list[str] = []
     for i, chunk in enumerate(retrieval["chunks"], 1):
         source = chunk.get("source", "")
-        is_example = chunk.get("from_example") or any(
-            d in source for d in example_dirs
+        is_example = (
+            chunk.get("from_example")
+            or chunk.get("mandatory")
+            or any(d in source for d in example_dirs)
         )
         tag = " [ПРИМЕР]" if is_example else ""
         parts.append(
@@ -57,6 +60,7 @@ def build_generation_user_prompt(
     *,
     example_dirs: list[str] | None = None,
     chunks: list[dict[str, Any]] | None = None,
+    brainstorm_topics: list[str] | None = None,
 ) -> str:
     conflict_text = ""
     if conflicts:
@@ -71,10 +75,11 @@ def build_generation_user_prompt(
         example_dirs or [],
         chunks or [],
     )
+    brainstorm_block = build_brainstorm_mandate(brainstorm_topics or [])
     return (
         f"Target problem:\n{problem}\n\n"
         f"Constraints (MUST obey — violations = automatic rejection):\n{constraint_block}"
-        f"{case_block}{strategy_block}\n\n"
+        f"{case_block}{strategy_block}{brainstorm_block}\n\n"
         f"Relevant sources and knowledge graph:\n{context}"
         f"{conflict_text}{hints_block}\n\n"
         "Note: sources may be in RU/EN/CN — extract facts and write hypotheses in Russian; "

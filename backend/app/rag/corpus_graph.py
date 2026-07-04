@@ -6,21 +6,8 @@ import json
 import re
 from typing import Any
 
-from app.config import settings
+from app.ingest.processed_store import iter_processed_docs
 from app.hypotheses.influence_graph import expand_graph_keywords
-
-
-def _load_processed_docs(limit: int = 200) -> list[dict[str, Any]]:
-    processed = settings.processed_dir
-    if not processed.exists():
-        return []
-    docs: list[dict[str, Any]] = []
-    for path in sorted(processed.glob("*.json"))[:limit]:
-        try:
-            docs.append(json.loads(path.read_text(encoding="utf-8")))
-        except (json.JSONDecodeError, OSError):
-            continue
-    return docs
 
 
 def build_corpus_subgraph(keywords: list[str], limit: int = 24) -> dict[str, Any]:
@@ -33,7 +20,7 @@ def build_corpus_subgraph(keywords: list[str], limit: int = 24) -> dict[str, Any
     links: list[dict[str, Any]] = []
     node_seen: set[str] = set()
 
-    for doc in _load_processed_docs():
+    for doc in iter_processed_docs(limit=200):
         meta = doc.get("metadata") or {}
         doc_id = doc.get("id", "")
         text = (doc.get("text") or "")[:800].lower()

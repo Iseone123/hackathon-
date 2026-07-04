@@ -2,34 +2,14 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
-from app.config import settings
+from app.ingest.processed_store import processed_catalog
 from app.models import RetrievalSource
 
 
-def _load_processed_catalog() -> dict[str, dict[str, str]]:
-    catalog: dict[str, dict[str, str]] = {}
-    processed = settings.processed_dir
-    if not processed.exists():
-        return catalog
-    for path in processed.glob("*.json"):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        doc_id = data.get("id", path.stem)
-        meta = data.get("metadata", {})
-        catalog[doc_id] = {
-            "title": meta.get("title") or path.stem,
-            "source_path": meta.get("source") or "",
-        }
-    return catalog
-
-
 def build_retrieval_sources(chunks: list[dict[str, Any]]) -> list[RetrievalSource]:
-    catalog = _load_processed_catalog()
+    catalog = processed_catalog()
     by_doc: dict[str, dict[str, Any]] = {}
     for chunk in chunks:
         doc_id = chunk["doc_id"]

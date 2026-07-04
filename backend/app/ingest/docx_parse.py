@@ -5,26 +5,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
-def _numbered_line(line: str) -> tuple[str, str] | None:
-    """Извлекает номер и текст из строки: '1. ...', '2) ...', '| 1. ... |'."""
-    stripped = line.strip()
-    m = re.match(r"^(?:\d+\.\s*|\d+\)\s*)(.+)$", stripped)
-    if m:
-        num = re.match(r"^(\d+)", stripped)
-        return (num.group(1), m.group(1).strip()) if num else None
-
-    if "|" in stripped:
-        cells = [c.strip() for c in stripped.split("|") if c.strip()]
-        for cell in cells:
-            m2 = re.match(r"^(\d+)\.\s*(.+)$", cell)
-            if m2:
-                return m2.group(1), m2.group(2).strip()
-    return None
+from app.ingest.brainstorm_topics import parse_numbered_line
 
 
 def _has_numbered_block(text: str, *, min_items: int = 2) -> bool:
-    count = sum(1 for line in text.splitlines() if _numbered_line(line))
+    count = sum(1 for line in text.splitlines() if parse_numbered_line(line))
     return count >= min_items
 
 
@@ -43,7 +28,7 @@ def enrich_structured_docx(text: str, path: Path) -> str:
     topics: list[str] = []
     enriched_lines: list[str] = []
     for line in text.splitlines():
-        parsed = _numbered_line(line)
+        parsed = parse_numbered_line(line)
         if parsed:
             num, topic = parsed
             topics.append(topic)
