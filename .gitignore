@@ -6,17 +6,21 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-*.egg-info/
-dist/
-build/
-node_modules/
-frontend/dist/
-backend/.pytest_cache/
-# Локальные данные, артефакты прогонов — не в git (тяжёлые PDF/JSON)
-data/**
-!data/README.md
-!data/examples.yaml
-*.log
+
+# PyPI configuration file
+.pypirc
+
+# Marimo
+marimo/_static/
+marimo/_lsp/
+__marimo__/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Project
+backend/data/store/
+backend/data/index/
+backend/data/source/
+exports/
 .DS_Store
-.idea/
-.vscode/
