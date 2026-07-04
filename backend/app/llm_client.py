@@ -1,187 +1,364 @@
-"""Клиент Yandex AI Studio: completion + embeddings.
+"""Клиент YandexGPT: completion + embeddings с ретраями и логированием."""
 
-Единственная точка входа для всех LLM-вызовов — модель можно заменить,
-не трогая бизнес-логику. Ключи только из окружения (.env), см. .env.example.
-"""
 from __future__ import annotations
 
 import json
 import logging
-import os
-import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from typing import Any
 
-import requests
-from dotenv import load_dotenv
+import httpx
+from tenacity import (
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 
-load_dotenv()
+from app.config import settings
 
-logger = logging.getLogger("llm_client")
-
-COMPLETION_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
-EMBEDDING_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/textEmbedding"
-
-RETRIES = 4
-TIMEOUT = 120
-RATE_LIMIT_BASE_WAIT = 10  # сек; лимиты YandexGPT — единицы RPS
+logger = logging.getLogger(__name__)
 
 
-class LLMError(RuntimeError):
-    pass
+class LLMRateLimitError(RuntimeError):
+    """Исчерпан лимит запросов к YandexGPT."""
+
+
+def _is_retryable_llm_error(exc: BaseException) -> bool:
+    if isinstance(exc, httpx.TimeoutException):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        return code == 429 or code >= 500
+    return False
 
 
 @dataclass
-class UsageLog:
-    """Накопительный лог токенов и латентности за процесс — для аудита."""
-
-    calls: int = 0
+class LLMCallLog:
+    operation: str
+    model: str
+    latency_ms: float
     input_tokens: int = 0
-    output_tokens: int = 0
-    total_latency_s: float = 0.0
-    history: list[dict] = field(default_factory=list)
-
-    def record(self, kind: str, usage: dict, latency: float) -> None:
-        self.calls += 1
-        inp = int(usage.get("inputTextTokens", 0))
-        out = int(usage.get("completionTokens", 0))
-        self.input_tokens += inp
-        self.output_tokens += out
-        self.total_latency_s += latency
-        self.history.append(
-            {"kind": kind, "input_tokens": inp, "output_tokens": out, "latency_s": round(latency, 2)}
-        )
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    success: bool = True
+    error: str | None = None
 
 
-USAGE = UsageLog()
+@dataclass
+class YandexLLMClient:
+    """Обёртка над Foundation Models API Yandex Cloud."""
 
+    api_key: str = field(default_factory=lambda: settings.yc_api_key)
+    folder_id: str = field(default_factory=lambda: settings.yc_folder_id)
+    timeout: float = field(default_factory=lambda: settings.llm_timeout_sec)
+    call_history: list[LLMCallLog] = field(default_factory=list)
+    _last_request_at: float = field(default=0.0, init=False, repr=False)
+    _throttle_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
-def _credentials() -> tuple[str, str]:
-    api_key = os.environ.get("YC_API_KEY", "")
-    folder = os.environ.get("YC_FOLDER_ID", "")
-    if not api_key or not folder:
-        raise LLMError(
-            "Не заданы YC_API_KEY / YC_FOLDER_ID. Скопируйте .env.example в .env и заполните."
-        )
-    return api_key, folder
-
-
-def llm_available() -> bool:
-    return bool(os.environ.get("YC_API_KEY")) and bool(os.environ.get("YC_FOLDER_ID"))
-
-
-def _post(url: str, payload: dict, api_key: str) -> dict:
-    last_err: Exception | None = None
-    for attempt in range(1, RETRIES + 1):
-        try:
-            resp = requests.post(
-                url,
-                json=payload,
-                headers={"Authorization": f"Api-Key {api_key}"},
-                timeout=TIMEOUT,
+    def __post_init__(self) -> None:
+        if not self.api_key or not self.folder_id:
+            raise ValueError(
+                "Задайте YC_API_KEY и YC_FOLDER_ID в .env (см. .env.example)"
             )
-            if resp.status_code == 429:
-                wait = RATE_LIMIT_BASE_WAIT * attempt
-                logger.warning("429 rate limit, жду %s c (попытка %s)", wait, attempt)
-                time.sleep(wait)
-                continue
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as e:
-            last_err = e
-            logger.warning("LLM запрос упал (попытка %s/%s): %s", attempt, RETRIES, e)
-            time.sleep(2**attempt)
-    raise LLMError(f"LLM недоступен после {RETRIES} попыток: {last_err}")
+        self._headers = {
+            "Authorization": f"Api-Key {self.api_key}",
+            "Content-Type": "application/json",
+            "x-data-logging-enabled": "false",
+        }
 
+    def _model_uri(self, kind: str, model: str) -> str:
+        prefix = "gpt" if kind == "gpt" else "emb"
+        return f"{prefix}://{self.folder_id}/{model}"
 
-def complete(
-    messages: list[dict],
-    temperature: float = 0.3,
-    max_tokens: int = 4000,
-    lite: bool = False,
-) -> str:
-    """messages: [{"role": "system"|"user"|"assistant", "text": "..."}]"""
-    api_key, folder = _credentials()
-    model = os.environ.get("YC_GPT_MODEL_LITE" if lite else "YC_GPT_MODEL", "yandexgpt/latest")
-    payload = {
-        "modelUri": f"gpt://{folder}/{model}",
-        "completionOptions": {
-            "stream": False,
-            "temperature": temperature,
-            "maxTokens": str(max_tokens),
-        },
-        "messages": messages,
-    }
-    t0 = time.monotonic()
-    data = _post(COMPLETION_URL, payload, api_key)
-    latency = time.monotonic() - t0
-    result = data.get("result", {})
-    USAGE.record("completion", result.get("usage", {}), latency)
-    alternatives = result.get("alternatives", [])
-    if not alternatives:
-        raise LLMError(f"Пустой ответ модели: {data}")
-    return alternatives[0]["message"]["text"]
+    def _log_call(self, log: LLMCallLog) -> None:
+        self.call_history.append(log)
+        level = logging.INFO if log.success else logging.ERROR
+        logger.log(
+            level,
+            "LLM %s model=%s latency=%.0fms tokens=%d/%d success=%s",
+            log.operation,
+            log.model,
+            log.latency_ms,
+            log.input_tokens,
+            log.completion_tokens,
+            log.success,
+        )
 
-
-def complete_json(
-    messages: list[dict],
-    temperature: float = 0.3,
-    max_tokens: int = 4000,
-    lite: bool = False,
-) -> dict | list:
-    """Completion с парсингом JSON из ответа; одна повторная попытка при мусоре."""
-    for attempt in range(2):
-        text = complete(messages, temperature=temperature, max_tokens=max_tokens, lite=lite)
+    def _throttle(self) -> None:
+        """Минимальный интервал между запросами — снижает 429 от YandexGPT."""
         try:
-            return extract_json(text)
-        except ValueError:
-            logger.warning("Невалидный JSON от модели (попытка %s), ответ: %.300s", attempt + 1, text)
-            messages = messages + [
-                {"role": "assistant", "text": text},
-                {"role": "user", "text": "Ответ не является валидным JSON. Верни ТОЛЬКО валидный JSON без пояснений и markdown."},
-            ]
-    raise LLMError("Модель дважды вернула невалидный JSON")
+            interval = float(settings.llm_request_delay_sec)
+        except (TypeError, ValueError):
+            interval = 0.0
+        if interval <= 0:
+            return
+        with self._throttle_lock:
+            elapsed = time.perf_counter() - self._last_request_at
+            if elapsed < interval:
+                time.sleep(interval - elapsed)
+            self._last_request_at = time.perf_counter()
 
+    @retry(
+        retry=retry_if_exception(_is_retryable_llm_error),
+        stop=stop_after_attempt(8),
+        wait=wait_exponential(multiplier=3, min=8, max=120),
+        reraise=True,
+    )
+    def _post(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self._throttle()
+        with httpx.Client(timeout=self.timeout) as client:
+            response = client.post(url, headers=self._headers, json=payload)
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After")
+                wait_sec = 15.0
+                if retry_after:
+                    try:
+                        wait_sec = max(wait_sec, float(retry_after))
+                    except ValueError:
+                        pass
+                logger.warning(
+                    "YandexGPT 429 — пауза %.0f с перед повтором%s",
+                    wait_sec,
+                    f" (Retry-After={retry_after})" if retry_after else "",
+                )
+                time.sleep(wait_sec)
+                response.raise_for_status()
+            if response.status_code >= 500:
+                response.raise_for_status()
+            response.raise_for_status()
+            return response.json()
 
-def extract_json(text: str) -> dict | list:
-    """Достаёт JSON из ответа модели: срезает ```-заборы и текст вокруг."""
-    text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    # первая { или [ до последней } или ]
-    for open_ch, close_ch in (("{", "}"), ("[", "]")):
-        start, end = text.find(open_ch), text.rfind(close_ch)
-        if start != -1 and end > start:
+    def complete(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        json_mode: bool = False,
+    ) -> str:
+        """Chat completion через Foundation Models API."""
+        model_name = model or settings.yandexgpt_model
+        model_uri = self._model_uri("gpt", model_name)
+        start = time.perf_counter()
+
+        messages = [
+            {"role": "system", "text": system_prompt},
+            {"role": "user", "text": user_prompt},
+        ]
+        payload: dict[str, Any] = {
+            "modelUri": model_uri,
+            "completionOptions": {
+                "stream": False,
+                "temperature": temperature if temperature is not None else settings.llm_temperature,
+                "maxTokens": str(max_tokens or settings.llm_max_tokens),
+            },
+            "messages": messages,
+        }
+        if json_mode:
+            payload["jsonObject"] = True
+
+        try:
+            data = self._post(settings.llm_completion_url, payload)
+            result = data["result"]["alternatives"][0]["message"]["text"]
+            usage = data.get("result", {}).get("usage", {})
+            self._log_call(
+                LLMCallLog(
+                    operation="completion",
+                    model=model_uri,
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                    input_tokens=int(usage.get("inputTextTokens", 0) or 0),
+                    completion_tokens=int(usage.get("completionTokens", 0) or 0),
+                    total_tokens=int(usage.get("totalTokens", 0) or 0),
+                )
+            )
+            if not result:
+                raise RuntimeError("LLM вернул пустой ответ")
+            return result
+        except httpx.HTTPStatusError as exc:
+            self._log_call(
+                LLMCallLog(
+                    operation="completion",
+                    model=model_uri,
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                    success=False,
+                    error=str(exc),
+                )
+            )
+            if exc.response.status_code == 429:
+                raise LLMRateLimitError(
+                    "Превышен лимит запросов YandexGPT (429). "
+                    "Подождите 2–3 минуты, не нажимайте кнопку повторно, затем повторите генерацию. "
+                    "Снимите «Авто-индексация», если данные уже в индексе."
+                ) from exc
+            raise
+        except Exception as exc:
+            self._log_call(
+                LLMCallLog(
+                    operation="completion",
+                    model=model_uri,
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                    success=False,
+                    error=str(exc),
+                )
+            )
+            raise
+
+    def complete_json(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        model: str | None = None,
+        samples: int = 1,
+    ) -> list[dict[str, Any]]:
+        """Несколько JSON-ответов для self-consistency."""
+        results: list[dict[str, Any]] = []
+        for i in range(samples):
+            if i > 0 and settings.llm_request_delay_sec > 0:
+                time.sleep(settings.llm_request_delay_sec)
+            raw = self.complete(
+                system_prompt,
+                user_prompt,
+                model=model,
+                json_mode=True,
+            )
             try:
-                return json.loads(text[start : end + 1])
-            except json.JSONDecodeError:
+                parsed = self._parse_json(raw)
+                results.append(parsed)
+            except (ValueError, json.JSONDecodeError) as exc:
+                logger.warning("Пропуск битого JSON-сэмпла: %s", exc)
+        if not results:
+            raise ValueError("LLM не вернул валидный JSON")
+        return results
+
+    def complete_lite(self, system_prompt: str, user_prompt: str) -> str:
+        """Быстрый/дешёвый вызов для NER и извлечения сущностей."""
+        return self.complete(
+            system_prompt,
+            user_prompt,
+            model=settings.yandexgpt_lite_model,
+            max_tokens=2000,
+            json_mode=True,
+        )
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._embed(texts, settings.embed_doc_model)
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed([text], settings.embed_query_model)[0]
+
+    def _embed_single(self, text: str, model: str) -> list[float]:
+        model_uri = self._model_uri("emb", model)
+        start = time.perf_counter()
+        payload = {"modelUri": model_uri, "text": text}
+        try:
+            data = self._post(settings.llm_embedding_url, payload)
+            if "result" in data:
+                vector = data["result"]["embedding"]
+            elif "embedding" in data:
+                vector = data["embedding"]
+            else:
+                raise RuntimeError(f"Unexpected embedding response: {list(data.keys())}")
+            self._log_call(
+                LLMCallLog(
+                    operation="embedding",
+                    model=model_uri,
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                    input_tokens=len(text.split()),
+                )
+            )
+            return vector
+        except Exception as exc:
+            self._log_call(
+                LLMCallLog(
+                    operation="embedding",
+                    model=model_uri,
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                    success=False,
+                    error=str(exc),
+                )
+            )
+            raise
+
+    def _embed(self, texts: list[str], model: str) -> list[list[float]]:
+        if not texts:
+            return []
+        if len(texts) == 1:
+            return [self._embed_single(texts[0], model)]
+
+        workers = max(1, int(settings.embed_parallel_workers))
+        if workers <= 1:
+            return [self._embed_single(text, model) for text in texts]
+
+        results: list[list[float] | None] = [None] * len(texts)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            future_map = {
+                pool.submit(self._embed_single, text, model): idx
+                for idx, text in enumerate(texts)
+            }
+            for future in as_completed(future_map):
+                idx = future_map[future]
+                results[idx] = future.result()
+        return results  # type: ignore[return-value]
+
+    @staticmethod
+    def _escape_control_chars_in_strings(text: str) -> str:
+        """Экранирует сырые control-символы внутри JSON-строк."""
+        result: list[str] = []
+        in_string = False
+        escape = False
+        for ch in text:
+            if escape:
+                result.append(ch)
+                escape = False
                 continue
-    raise ValueError("JSON не найден в ответе модели")
+            if ch == "\\" and in_string:
+                result.append(ch)
+                escape = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                result.append(ch)
+                continue
+            if in_string and ord(ch) < 32:
+                if ch == "\n":
+                    result.append("\\n")
+                elif ch == "\r":
+                    result.append("\\r")
+                elif ch == "\t":
+                    result.append("\\t")
+                else:
+                    result.append(" ")
+                continue
+            result.append(ch)
+        return "".join(result)
 
-
-def embed(text: str, query: bool = False) -> list[float]:
-    """Эмбеддинг документа (text-search-doc) или запроса (text-search-query)."""
-    api_key, folder = _credentials()
-    model = "text-search-query" if query else "text-search-doc"
-    payload = {"modelUri": f"emb://{folder}/{model}/latest", "text": text[:8000]}
-    t0 = time.monotonic()
-    data = _post(EMBEDDING_URL, payload, api_key)
-    USAGE.record("embedding", {}, time.monotonic() - t0)
-    emb = data.get("embedding")
-    if not emb:
-        raise LLMError(f"Пустой эмбеддинг: {data}")
-    return emb
-
-
-def embed_batch(texts: list[str], query: bool = False, rps: float = 5.0) -> list[list[float]]:
-    """Последовательный батч с троттлингом под rate limit AI Studio."""
-    out = []
-    delay = 1.0 / rps
-    for i, t in enumerate(texts):
-        out.append(embed(t, query=query))
-        if i % 50 == 49:
-            logger.info("Эмбеддинги: %s/%s", i + 1, len(texts))
-        time.sleep(delay)
-    return out
+    @staticmethod
+    def _parse_json(raw: str) -> dict[str, Any]:
+        text = raw.strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            text = "\n".join(
+                line for line in lines if not line.strip().startswith("```")
+            )
+        text = YandexLLMClient._escape_control_chars_in_strings(text)
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            start = text.find("{")
+            end = text.rfind("}") + 1
+            if start >= 0 and end > start:
+                parsed = json.loads(text[start:end])
+            else:
+                raise
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                f"LLM вернул {type(parsed).__name__} вместо JSON-объекта"
+            )
+        return parsed
