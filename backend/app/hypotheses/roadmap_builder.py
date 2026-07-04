@@ -131,3 +131,106 @@ def roadmap_timeline(steps: list[RoadmapStep]) -> list[dict[str, Any]]:
         )
         cursor += s.duration_days
     return timeline
+
+
+RESOURCE_TEMPLATES: list[dict[str, Any]] = [
+    {
+        "id": "lab_baseline",
+        "label": "Лабораторный контроль",
+        "title": "Контрольный опыт на пробах 1 кг",
+        "duration_days": 7,
+        "resources": ["пробы 1 кг", "лабораторная флотомашина", "реагенты базового режима"],
+        "cost_rub": 120_000,
+    },
+    {
+        "id": "reagent_sweep",
+        "label": "Подбор дозировки реагента",
+        "title": "Серия опытов с варьированием дозировки",
+        "duration_days": 14,
+        "resources": ["пробы 3×1 кг", "реагент", "анализ проб"],
+        "cost_rub": 280_000,
+    },
+    {
+        "id": "ph_matrix",
+        "label": "Матрица pH",
+        "title": "Оптимизация pH в заданном диапазоне",
+        "duration_days": 10,
+        "resources": ["пробы 2 кг", "pH-метр", "реагенты регулировки pH"],
+        "cost_rub": 190_000,
+    },
+    {
+        "id": "pilot_cell",
+        "label": "Пилот на ячейке",
+        "title": "Пилотные испытания на промышленной ячейке",
+        "duration_days": 21,
+        "resources": ["проба 50 кг", "пилотная ячейка", "оператор смены"],
+        "cost_rub": 650_000,
+    },
+    {
+        "id": "analytics",
+        "label": "Аналитика проб",
+        "title": "Химический и granulometric анализ",
+        "duration_days": 5,
+        "resources": ["10 проб", "ICP/AAS", "гранулометрия"],
+        "cost_rub": 85_000,
+    },
+]
+
+
+def estimate_step_cost(step: RoadmapStep) -> int:
+    """Грубая оценка стоимости шага по длительности и числу ресурсов."""
+    base = 15_000 * max(1, step.duration_days // 7)
+    resource_bonus = 8_000 * len(step.resources)
+    return base + resource_bonus
+
+
+def summarize_roadmap(steps: list[RoadmapStep]) -> dict[str, Any]:
+    """Сводка для конструктора: сроки, ресурсы, оценка бюджета."""
+    ordered = sorted(steps, key=lambda x: x.step_order)
+    timeline = roadmap_timeline(ordered)
+    total_days = timeline[-1]["end_day"] if timeline else 0
+    all_resources: list[str] = []
+    for s in ordered:
+        for r in s.resources:
+            if r not in all_resources:
+                all_resources.append(r)
+    total_cost = sum(estimate_step_cost(s) for s in ordered)
+    parallel_groups = len([s for s in ordered if not s.depends_on])
+    return {
+        "total_days": total_days,
+        "step_count": len(ordered),
+        "resources_unique": all_resources,
+        "estimated_cost_rub": total_cost,
+        "timeline": timeline,
+        "parallel_entry_points": parallel_groups,
+    }
+
+
+def step_from_template(template_id: str, order: int) -> RoadmapStep | None:
+    tpl = next((t for t in RESOURCE_TEMPLATES if t["id"] == template_id), None)
+    if not tpl:
+        return None
+    return RoadmapStep(
+        step_order=order,
+        title=str(tpl["title"]),
+        description=str(tpl["title"]),
+        duration_days=int(tpl["duration_days"]),
+        resources=list(tpl["resources"]),
+        success_criteria="Улучшение целевого KPI ≥3% относительно контроля",
+        failure_criteria="Отсутствие статистически значимого эффекта vs контроль",
+        depends_on=[order - 1] if order > 1 else [],
+    )
+
+
+def reorder_steps(steps: list[RoadmapStep], new_order: list[int]) -> list[RoadmapStep]:
+    """Перестановка шагов по списку step_order."""
+    by_order = {s.step_order: s for s in steps}
+    reordered: list[RoadmapStep] = []
+    for i, old_order in enumerate(new_order, 1):
+        step = by_order.get(old_order)
+        if not step:
+            continue
+        reordered.append(
+            step.model_copy(update={"step_order": i, "depends_on": [i - 1] if i > 1 else []})
+        )
+    return reordered

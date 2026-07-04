@@ -5,54 +5,14 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app.hypotheses.prompt_sections import CITATION_RULES_SHORT, FORMULATION_RULES_SHORT
+from app.hypotheses.prompt_sections import build_repair_system
 from app.hypotheses.sanitize import sanitize_raw_hypothesis
 from app.llm_client import YandexLLMClient
 from app.models import Hypothesis
 
 logger = logging.getLogger(__name__)
 
-REPAIR_SYSTEM = (
-    """You fix research hypotheses so they pass strict quality review.
-Respond ONLY with JSON for ONE hypothesis:
-{
-  "text": "...",
-  "mechanism": "...",
-  "reasoning": "...",
-  "verification_roadmap": ["step1", "step2", "step3"],
-  "sources": [{"doc_id": "exact_id_from_context", "snippet": "verbatim quote from context"}],
-  "novelty_score": 0-10,
-  "feasibility_score": 0-10,
-  "expected_value_score": 0-10,
-  "risk": {"technical": 0-10, "economic": 0-10},
-  "influence_graph": {
-    "nodes": [
-      {"id": "reagent", "type": "Material", "source_doc_id": "exact_id_from_context"},
-      {"id": "flotation", "type": "Process", "source_doc_id": "exact_id_from_context"},
-      {"id": "Cu recovery", "type": "Property", "source_doc_id": "exact_id_from_context"}
-    ],
-    "links": [
-      {"source": "reagent", "target": "flotation", "type": "USED_IN"},
-      {"source": "flotation", "target": "Cu recovery", "type": "AFFECTS"}
-    ],
-    "states": [{"id": "lab phase", "type": "State", "phase_order": 1}],
-    "transitions": []
-  }
-}
-Rules:
-- obey ALL constraints
-- use ONLY doc_id values from context
-- output text/mechanism/reasoning/roadmap in Russian; translate facts from EN/CN sources
-- snippet stays verbatim in the source language (do NOT translate snippet)
-- """
-    + CITATION_RULES_SHORT
-    + "\n- "
-    + FORMULATION_RULES_SHORT
-    + """
-- min 2 roadmap steps with resources and success/failure criteria
-- reasoning must explain the snippet (translate foreign snippets into Russian)
-"""
-)
+REPAIR_SYSTEM = build_repair_system()
 
 
 class HypothesisRefiner:

@@ -62,7 +62,11 @@ class ExampleRegistry:
 
 
 def _examples_yaml_path() -> Path:
-    return settings.data_dir_path / "examples.yaml"
+    configured = settings.data_dir_path / "examples.yaml"
+    if configured.is_file():
+        return configured
+    repo_default = Path(__file__).resolve().parents[3] / "data" / "examples.yaml"
+    return repo_default
 
 
 def _parse_registry(data: dict[str, Any]) -> ExampleRegistry:

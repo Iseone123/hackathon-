@@ -25,7 +25,20 @@ __all__ = [
     "submit_feedback",
     "download_export",
     "update_roadmap",
+    "fetch_roadmap_templates",
 ]
+
+
+def _auth_headers() -> dict[str, str]:
+    key = os.getenv("API_KEY", "").strip()
+    return {"X-API-Key": key} if key else {}
+
+
+def fetch_roadmap_templates() -> list[dict[str, Any]]:
+    with httpx.Client(timeout=TIMEOUT, headers=_auth_headers()) as client:
+        r = client.get(f"{API_URL}/roadmap/templates")
+        r.raise_for_status()
+        return r.json().get("templates", [])
 
 
 def health() -> dict[str, Any]:
@@ -118,7 +131,7 @@ def generate(
         payload["weights"] = weights
     if ingest_directories:
         payload["ingest_directories"] = ingest_directories
-    with httpx.Client(timeout=TIMEOUT) as client:
+    with httpx.Client(timeout=TIMEOUT, headers=_auth_headers()) as client:
         r = client.post(f"{API_URL}/hypotheses/generate", json=payload)
         if r.status_code == 429:
             raise RuntimeError(
@@ -131,7 +144,7 @@ def generate(
 
 
 def submit_feedback(hypothesis_id: str, status: str, comment: str = "") -> dict[str, Any]:
-    with httpx.Client(timeout=TIMEOUT) as client:
+    with httpx.Client(timeout=TIMEOUT, headers=_auth_headers()) as client:
         r = client.post(
             f"{API_URL}/hypotheses/{hypothesis_id}/feedback",
             json={"status": status, "comment": comment},
@@ -141,7 +154,7 @@ def submit_feedback(hypothesis_id: str, status: str, comment: str = "") -> dict[
 
 
 def update_roadmap(hypothesis_id: str, steps: list[dict]) -> dict[str, Any]:
-    with httpx.Client(timeout=TIMEOUT) as client:
+    with httpx.Client(timeout=TIMEOUT, headers=_auth_headers()) as client:
         r = client.patch(
             f"{API_URL}/hypotheses/{hypothesis_id}/roadmap",
             json={"steps": steps},
@@ -151,7 +164,7 @@ def update_roadmap(hypothesis_id: str, steps: list[dict]) -> dict[str, Any]:
 
 
 def download_export(generation_id: str, fmt: str) -> bytes:
-    with httpx.Client(timeout=TIMEOUT) as client:
+    with httpx.Client(timeout=TIMEOUT, headers=_auth_headers()) as client:
         if fmt in ("pdf", "docx"):
             r = client.post(
                 f"{API_URL}/export/report",

@@ -235,7 +235,14 @@ class IngestSqlRequest(BaseModel):
 class GenerateRequest(BaseModel):
     problem: str
     constraints: str = ""
-    language: str = "ru"
+    language: str = Field(
+        default="ru",
+        description="Зарезервировано; вывод гипотез всегда на русском",
+    )
+    hypothesis_count: int | None = Field(
+        default=None,
+        description="Число гипотез для генерации (1–12); по умолчанию из DEFAULT_HYPOTHESIS_COUNT",
+    )
     top_k: int = 12
     weights: dict[str, float] | None = None
     auto_ingest: bool = False

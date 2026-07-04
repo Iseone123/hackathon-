@@ -12,6 +12,7 @@ import {
   submitFeedback,
   uploadDocument,
 } from './api';
+import RoadmapEditor from './RoadmapEditor';
 
 function InfluenceGraph({ graph }: { graph: Hypothesis['influence_graph'] }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -89,6 +90,7 @@ export default function App() {
   const [selected, setSelected] = useState<Hypothesis | null>(null);
   const [examples, setExamples] = useState<DemoExample[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [hypothesisCount, setHypothesisCount] = useState(5);
 
   useEffect(() => {
     fetchDemoExamples().then(setExamples).catch(() => {});
@@ -102,7 +104,7 @@ export default function App() {
     setLoading(true);
     setError('');
     try {
-      const res = await generateHypotheses(problem, constraints);
+      const res = await generateHypotheses(problem, constraints, 8, hypothesisCount);
       setResult(res);
       setSelected(res.hypotheses[0] || null);
     } catch (e) {
@@ -110,7 +112,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [problem, constraints]);
+  }, [problem, constraints, hypothesisCount]);
 
   const loadExample = async (ex: DemoExample) => {
     setProblem(ex.problem);
@@ -119,7 +121,7 @@ export default function App() {
     setError('');
     try {
       await ingestBatch(ex.data_path);
-      const res = await generateHypotheses(ex.problem, ex.constraints);
+      const res = await generateHypotheses(ex.problem, ex.constraints, 8, hypothesisCount);
       setResult(res);
       setSelected(res.hypotheses[0] || null);
     } catch (e) {
@@ -147,7 +149,7 @@ export default function App() {
     <div className="app">
       <header>
         <h1>Генерация научных гипотез</h1>
-        <p>RAG + граф знаний + YandexGPT — материаловедение и металлургия</p>
+        <p>RAG + граф знаний + YandexGPT — материаловедение, химия, процессы</p>
       </header>
 
       <div className="grid">
@@ -165,6 +167,16 @@ export default function App() {
               value={constraints}
               onChange={(e) => setConstraints(e.target.value)}
               placeholder="Бюджет, TRL, оборудование..."
+            />
+            <label>Число гипотез (1–12)</label>
+            <input
+              type="number"
+              min={1}
+              max={12}
+              value={hypothesisCount}
+              onChange={(e) =>
+                setHypothesisCount(Math.min(12, Math.max(1, Number(e.target.value) || 5)))
+              }
             />
             <button onClick={handleGenerate} disabled={loading}>
               {loading ? 'Генерация...' : 'Сгенерировать гипотезы'}
@@ -318,6 +330,12 @@ export default function App() {
                   )}
                   <h3 style={{ fontSize: '0.95rem' }}>Граф влияния</h3>
                   <InfluenceGraph graph={selected.influence_graph} />
+                  <RoadmapEditor
+                    hypothesisId={selected.id}
+                    onUpdated={(steps) =>
+                      setSelected({ ...selected, structured_roadmap: steps })
+                    }
+                  />
                   {selected.sources.length > 0 && (
                     <div className="sources">
                       <strong>Источники:</strong>

@@ -20,4 +20,5 @@ def test_delta_not_from_pulp_density():
     )
     bc = build_business_case(h, "извлечение меди", "без капитальных вложений", [])
     assert bc.expected_delta_pct == 3.0
-    assert bc.annual_revenue_impact_rub == 24375000
+    assert bc.annual_revenue_impact_rub == 1_500_000
+    assert bc.annual_cost_savings_rub == 500_000

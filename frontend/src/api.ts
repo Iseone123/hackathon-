@@ -89,6 +89,7 @@ export interface Hypothesis {
   risk: RiskScores;
   sources: SourceRef[];
   verification_roadmap?: string[];
+  structured_roadmap?: RoadmapStep[];
   reasoning: string;
   conflicts: string[];
   influence_graph: {
@@ -100,6 +101,34 @@ export interface Hypothesis {
   score_breakdown?: ScoreBreakdown;
   judge_verdict?: JudgeVerdict;
   generation_id?: string;
+}
+
+export interface RoadmapStep {
+  step_order: number;
+  title: string;
+  description?: string;
+  duration_days: number;
+  resources: string[];
+  success_criteria: string;
+  failure_criteria: string;
+  depends_on: number[];
+}
+
+export interface RoadmapTemplate {
+  id: string;
+  label: string;
+  duration_days: number;
+  resources: string[];
+  cost_rub?: number;
+}
+
+export interface RoadmapSummary {
+  hypothesis_id: string;
+  steps: RoadmapStep[];
+  total_days: number;
+  step_count: number;
+  estimated_cost_rub: number;
+  resources_unique: string[];
 }
 
 export interface GenerateResponse {
@@ -124,16 +153,31 @@ export interface DemoExample {
 }
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_KEY = import.meta.env.VITE_API_KEY || '';
+
+function apiHeaders(json = true): HeadersInit {
+  const h: Record<string, string> = {};
+  if (json) h['Content-Type'] = 'application/json';
+  if (API_KEY) h['X-API-Key'] = API_KEY;
+  return h;
+}
 
 export async function generateHypotheses(
   problem: string,
   constraints: string,
-  topK = 8
+  topK = 8,
+  hypothesisCount = 5
 ): Promise<GenerateResponse> {
   const res = await fetch(`${API_URL}/hypotheses/generate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ problem, constraints, top_k: topK }),
+    headers: apiHeaders(),
+    body: JSON.stringify({
+      problem,
+      constraints,
+      top_k: topK,
+      language: 'ru',
+      hypothesis_count: hypothesisCount,
+    }),
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -170,7 +214,7 @@ export async function submitFeedback(
 ) {
   const res = await fetch(`${API_URL}/hypotheses/${hypothesisId}/feedback`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: apiHeaders(),
     body: JSON.stringify({ status, comment }),
   });
   if (!res.ok) throw new Error(await res.text());
@@ -183,4 +227,32 @@ export function exportReportUrl(generationId: string, format: 'pdf' | 'docx') {
 
 export function exportTasksUrl(generationId: string, format: 'json' | 'csv') {
   return `${API_URL}/export/tasks?generation_id=${generationId}&format=${format}`;
+}
+
+export async function fetchRoadmapTemplates(): Promise<RoadmapTemplate[]> {
+  const res = await fetch(`${API_URL}/roadmap/templates`, { headers: apiHeaders(false) });
+  if (!res.ok) throw new Error(await res.text());
+  const data = await res.json();
+  return data.templates;
+}
+
+export async function fetchRoadmapSummary(hypothesisId: string): Promise<RoadmapSummary> {
+  const res = await fetch(`${API_URL}/roadmap/${hypothesisId}/summary`, {
+    headers: apiHeaders(false),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function updateRoadmap(
+  hypothesisId: string,
+  steps: RoadmapStep[]
+): Promise<Hypothesis> {
+  const res = await fetch(`${API_URL}/hypotheses/${hypothesisId}/roadmap`, {
+    method: 'PATCH',
+    headers: apiHeaders(),
+    body: JSON.stringify({ steps }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }

@@ -10,7 +10,8 @@ from app.ingest.tabular import (
     summarize_sheet_domain,
 )
 from app.rag.example_registry import get_example_registry, infer_example_dirs
-from app.rag.example_context import kpi_chunk_boost, score_example_chunk
+from app.ingest.kpi import kpi_chunk_boost
+from app.rag.example_retrieval import score_example_chunk
 
 
 def test_infer_all_examples_on_generic_tailings():

@@ -64,6 +64,7 @@ class AgenticRAGRetriever:
         conflicts: list[str] = []
         keywords: list[str] = []
         example_dirs: list[str] = []
+        brainstorm_topics: list[str] = []
         qdrant_total = 0
         step_traces: list[dict[str, Any]] = []
 
@@ -90,6 +91,7 @@ class AgenticRAGRetriever:
             conflicts.extend(result.get("conflicts") or [])
             keywords.extend(result.get("keywords") or [])
             example_dirs.extend(result.get("example_dirs") or [])
+            brainstorm_topics.extend(result.get("brainstorm_topics") or [])
             qdrant_total = max(qdrant_total, int(result.get("qdrant_total") or 0))
             step_traces.append(
                 {
@@ -138,6 +140,7 @@ class AgenticRAGRetriever:
             "conflicts": self._dedupe_strings(conflicts)[:5],
             "keywords": self._dedupe_strings(keywords)[:20],
             "example_dirs": self._dedupe_strings(example_dirs),
+            "brainstorm_topics": self._dedupe_strings(brainstorm_topics)[:20],
             "qdrant_total": qdrant_total,
             "agentic_trace": trace,
         }

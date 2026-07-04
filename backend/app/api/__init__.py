@@ -8,8 +8,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import export, health, hypotheses, ingest, meta
+from app.api import export, health, hypotheses, ingest, meta, roadmap, settings as settings_api
 from app.config import settings
+from app.security.auth import ApiAuthMiddleware
 
 logging.basicConfig(level=logging.INFO)
 
@@ -35,9 +36,12 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(ApiAuthMiddleware)
     app.include_router(health.router)
     app.include_router(ingest.router)
     app.include_router(hypotheses.router)
     app.include_router(export.router)
     app.include_router(meta.router)
+    app.include_router(roadmap.router)
+    app.include_router(settings_api.router)
     return app

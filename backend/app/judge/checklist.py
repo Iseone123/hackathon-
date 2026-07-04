@@ -5,6 +5,13 @@ from __future__ import annotations
 import re
 from typing import Callable
 
+from app.domain.parameters import extract_text_parameters, has_measurable_parameters
+from app.domain.profile import (
+    kpi_markers_from_problem,
+    process_intervention_patterns,
+    testable_action_patterns,
+    value_link_patterns,
+)
 from app.hypotheses.influence_graph import validate_influence_graph
 from app.models import CaseCheckItem, CaseCompliance, Hypothesis
 
@@ -30,73 +37,27 @@ OPTIONAL_CHECKS: list[tuple[str, str]] = [
 
 
 def _has_specific_params(text: str) -> bool:
-    patterns = [
-        r"\d+[\.,]?\d*\s*%",
-        r"\d+[\.,]?\d*\s*(кг|г|т|мг|л|мл|ppm|°C)\b",
-        r"\d+[\.,]?\d*\s*кг\s*/\s*т",
-        r"pH\s*\d",
-        r"\d+[\.,]?\d*\s*[-–—]\s*\d+",
-        # Аппаратные параметры: размеры, обороты, мощность
-        r"\d+[\.,]?\d*\s*(мм|мкм|см|м\b|об/мин|rpm|кВт|МПа|бар)\b",
-        r"(?:с|от)\s*\d+\s*(?:на|до)\s*\d+",
-        r"\d+\s*(?:→|->)\s*\d+",
-    ]
-    return any(re.search(p, text, re.IGNORECASE) for p in patterns)
+    return has_measurable_parameters(text)
 
 
-def _has_equipment_testability(text: str) -> bool:
-    """Проверяемость аппаратно-режимных гипотез (мельницы, грохота, гидроциклоны)."""
-    has_equipment = bool(
-        re.search(
-            r"(мельниц|гидроциклон|грохот|футеровк|насадок|сепаратор|"
-            r"классификатор|грохочен|циклон|дробил|мельни|флотац)",
-            text,
-            re.IGNORECASE,
-        )
-    )
-    has_change = bool(
-        re.search(
-            r"(изменени|замен|модерниз|установк|оптимизац|перестрой|"
-            r"реконструкц|увеличени|снижени|перевод|переключ|"
-            r"повысит|снизит|улучшит|увеличит)",
-            text,
-            re.IGNORECASE,
-        )
-    )
-    has_concrete = _has_specific_params(text) or bool(
-        re.search(
-            r"(геометри|конфигурац|конструкц|диаметр|крупност|зазор|"
-            r"частот|скорост|схем|режим|класс)",
-            text,
-            re.IGNORECASE,
-        )
-    )
-    return has_equipment and has_change and has_concrete
-
-
-def _kpi_keywords(problem: str) -> list[str]:
-    words = re.findall(r"[а-яёa-z]{5,}", problem.lower())
-    return words[:8]
+def _has_intervention_testability(text: str) -> bool:
+    """Проверяемость процессно-аппаратных и составных гипотез (любая область)."""
+    intervention_re, action_re, concrete_re = process_intervention_patterns()
+    has_intervention = bool(intervention_re.search(text))
+    has_change = bool(action_re.search(text))
+    has_concrete = _has_specific_params(text) or bool(concrete_re.search(text))
+    return has_intervention and has_change and has_concrete
 
 
 def _check_testable_formulation(h: Hypothesis) -> tuple[bool, str]:
     text = f"{h.text} {h.mechanism}".strip()
     if len(h.text.strip()) < 40:
         return False, "Формулировка слишком короткая"
-    has_action = bool(
-        re.search(
-            r"(повысит|повышени|снизит|снижени|улучшит|улучшени|"
-            r"обеспечит|позволит|увеличит|оптимизир|"
-            r"увеличит|достигнет|обеспечит|изменит|заменит|"
-            r"модернизир|переведёт|переведет)",
-            text,
-            re.IGNORECASE,
-        )
-    )
+    has_action = bool(testable_action_patterns().search(text))
     if not has_action:
         return False, "Нет проверяемого утверждения (ожидаемый эффект)"
-    if not (_has_specific_params(text) or _has_equipment_testability(text)):
-        return False, "Нет конкретных параметров (%, кг/т, pH, аппаратный режим и т.п.)"
+    if not (_has_specific_params(text) or _has_intervention_testability(text)):
+        return False, "Нет конкретных параметров (%, единицы, режим, состав и т.п.)"
     if re.search(r"\bможет\b", text, re.I) and not re.search(
         r"\d+[\.,]?\d*\s*%", text
     ):
@@ -157,16 +118,9 @@ def _check_kpi_value(h: Hypothesis, problem: str) -> tuple[bool, str]:
     if not (1 <= h.expected_value_score <= 10):
         return False, "Некорректная оценка ценности"
     combined = f"{h.text} {h.reasoning} {h.mechanism}".lower()
-    problem_words = _kpi_keywords(problem)
-    linked_to_problem = any(w in combined for w in problem_words if len(w) > 5)
-    value_markers = bool(
-        re.search(
-            r"(извлечени|себестоим|прочност|жаропроч|kpi|эффективн|"
-            r"повышени|снижени|оптимизац|результат|целев)",
-            combined,
-            re.IGNORECASE,
-        )
-    )
+    problem_words = kpi_markers_from_problem(problem)
+    linked_to_problem = any(w in combined for w in problem_words if len(w) > 4)
+    value_markers = bool(value_link_patterns().search(combined))
     if not linked_to_problem:
         return False, "Нет связи с формулировкой задачи"
     if not value_markers:

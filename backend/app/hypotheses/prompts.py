@@ -1,9 +1,7 @@
 """Промпты для генерации гипотез."""
 
-from app.hypotheses.prompt_sections import (
-    CITATION_RULES,
-    build_generation_system,
-)
+from app.hypotheses.prompt_constants import CITATION_RULES
+from app.hypotheses.prompt_sections import build_generation_system
 
 GENERATION_SYSTEM = build_generation_system()
 

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from app.rag.example_context import (
+from app.rag.example_registry import infer_example_dirs
+from app.rag.example_retrieval import (
     example_source_boost,
-    infer_example_dirs,
     merge_example_chunks,
     score_example_chunk,
 )
@@ -47,7 +47,7 @@ def test_merge_example_chunks_prepends():
 
 def test_score_example_chunk_prefers_kpi():
     high = score_example_chunk(
-        "Итого извлекаемый металл в хвостах: 72.8%",
+        "Итого изvлекаемый металл в хвостах: 72.8%",
         ["хвост", "извлечение", "меди"],
     )
     low = score_example_chunk("общая теория флотации", ["хвост", "извлечение", "меди"])
